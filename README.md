@@ -23,4 +23,4 @@ If you can connect it to your own regtest node the following things work: two us
 
 # What doesn't work?
 
-Neither party detects cheating attempts, cooperative closures don't work, payments do not yet involve HTLCs, and they are not cross-compatible with "real" lightning payments yet. Also, user balances are not yet displayed. I'm just throwing this stuff up on github early so people can see what I'm working on in the open. Stay tuned for more.
+Neither party detects cheating attempts, cooperative closures don't work, payments do not yet involve HTLCs, and frightening payments are not compatible with "real" lightning payments yet. Also, user balances are not yet displayed. I'm just throwing this stuff up on github early so people can see what I'm working on in the open. Stay tuned for more.
