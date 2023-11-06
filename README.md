@@ -19,4 +19,8 @@ Most of the stuff that happens in the current version happens in the browser con
 
 # Does any of it work right now?
 
-If you can connect it to your own regtest node the following things work: two users can create a channel, fund it, create commitment transactions, send a payment from the channel opener to the other person, and then force close the channel. I'm working on the other stuff, and also on some automation around justice transactions and detecting incoming payments, and I will hopefully eventually display a balance and similar stuff you'd expect in a bitcoin wallet. But I'm just throwing this stuff up on github early so people can see what I'm working on in the open. Stay tuned for more.
+If you can connect it to your own regtest node the following things work: two users can create a channel, fund it, create commitment transactions, send as many second layer payments as they like to and from one another, and then force close the channel.
+
+# What doesn't work?
+
+Neither party detects cheating attempts, cooperative closures don't work, payments do not yet involve HTLCs, and they are not cross-compatible with "real" lightning payments yet. Also, user balances are not yet displayed. I'm just throwing this stuff up on github early so people can see what I'm working on in the open. Stay tuned for more.
