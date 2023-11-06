@@ -1,1413 +1,624 @@
 <!DOCTYPE html>
 <html>
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, user-scalable=no" />
-    <script src="https://bitcoincore.tech/apps/bitcoinjs-ui/lib/bitcoinjs-lib.js"></script>
-    <script src="https://bundle.run/noble-secp256k1@1.2.14"></script>
-    <script src="https://bundle.run/browserify-cipher@1.0.1"></script>
-    <script src="https://bundle.run/buffer@6.0.3"></script>
-    <script src="https://bundle.run/varuint-bitcoin@1.1.2"></script>
-    <script src="https://supertestnet.github.io/bitcoin-chess/js/qrcode.js"></script>
-    <style>
-        * {
-            box-sizing: border-box;
-            font-size: 1.15em;
-            font-family: Arial, sans-serif;
-        }
-        html {
-            max-width: 70ch;
-            padding: 3em 1em;
-            margin: auto;
-            line-height: 1.25;
-        }
-        h1 {
-            font-size: 2em;
-        }
-        h2 {
-            font-size: 1.5em;
-        }
-        input {
-            width: 100%;
-            height: 1.8em;
-            border: 1px solid grey;
-        }
-    </style>
-</head>
-<body>
-    <h1>Frightening network 👻</h1>
-    <p>Your public key</p>
-    <input type="text" id="nostr_pubkey" name="nostr_pubkey" disabled />
-    <p>Enter your counterparty's pubkey</p>
-    <input type="text" id="counterparty" name="counterparty" />
-    <p>Enter a txid</p>
-    <input type="text" id="txid" name="txid" />
-    <p>Enter a txindex</p>
-    <input type="number" id="txindex" name="txindex" />
-    <p>Amount</p>
-    <input type="number" id="amount" name="amount" />
-    <p>
-        <button type="button" onclick='prepareMessageForCounterparty( document.getElementById( "counterparty" ).value, document.getElementById( "txid" ).value, document.getElementById( "txindex" ).value, document.getElementById( "amount" ).value );'>Submit</button>
-    </p>
-    <script>
-        window.onload = function() {
-            var deposit_keypair = bitcoinjs.ECPair.makeRandom();
-            var deposit_privkey = deposit_keypair.privateKey.toString( "hex" );
-            var deposit_pubkey = deposit_keypair.publicKey.toString( "hex" );
-            sessionStorage[ "deposit_privkey" ] = deposit_privkey;
-            sessionStorage[ "deposit_pubkey" ] = deposit_pubkey;
-            var deposit_address = getNativeSegwitAddressFromPubkeyHex( deposit_pubkey );
-            document.body.append( createQR( deposit_address ) );
-            document.body.append( deposit_address );
-            var br = document.createElement( "br" );
-            var br2 = document.createElement( "br" );
-            document.body.append( br, br2 );
-            document.body.append( "send the amount above plus 500 sats" );
-        }
-    </script>
-    <script>
-        function prepareMessageForCounterparty( counterparty, txid, txindex, amount ) {
-            var keypair = bitcoinjs.ECPair.makeRandom();
-            var privkey = keypair.privateKey.toString( "hex" );
-            var pubkey = keypair.publicKey.toString( "hex" );
-            var revpreimage = bitcoinjs.ECPair.makeRandom().privateKey.toString( "hex" );
-            var revhash = bitcoinjs.crypto.hash160( buffer.Buffer.from( revpreimage, "hex" ) ).toString( "hex" );
-            txindex = Number( txindex );
-            amount = Number( amount );
-            console.log( "counterparty:", counterparty );
-            console.log( "txid:", txid );
-            console.log( "txindex:", txindex );
-            console.log( "amount:", amount );
-            console.log( "private key:", privkey );
-            console.log( "pubkey:", pubkey );
-            console.log( "revpreimage:", revpreimage );
-            console.log( "revhash:", revhash );
-            var channel_info = {}
-            channel_info[ "counterparty" ] = counterparty;
-            channel_info[ "txid" ] = txid;
-            channel_info[ "txindex" ] = txindex;
-            channel_info[ "amount" ] = amount;
-            channel_info[ "privkey" ] = privkey;
-            channel_info[ "pubkey" ] = pubkey;
-            var state_one = {}
-            state_one[ "revpreimage" ] = revpreimage;
-            state_one[ "revhash" ] = revhash;
-            state_one[ "opener_balance" ] = amount - 500;
-            state_one[ "openee_balance" ] = 0;
-            state_one[ "pending_balance" ] = 0;
-            channel_info[ "state_one" ] = state_one;
-            sessionStorage[ "channel_info" ] = JSON.stringify( channel_info );
-            var message = {}
-            message[ "type" ] = "open channel";
-            var content = {}
-            content[ "txid" ] = txid;
-            content[ "txindex" ] = txindex;
-            content[ "pubkey" ] = pubkey;
-            content[ "deposit_pubkey" ] = sessionStorage[ "deposit_pubkey" ];
-            content[ "amount" ] = amount;
-            content[ "revhash" ] = revhash;
-            message[ "content" ] = content;
-            sendDM( JSON.stringify( message ), counterparty );
-        }
-    </script>
-    <script>
-        async function handleMessage( message ) {
-            var [ type, subId, event ] = JSON.parse( message.data );
-            var { kind, content } = event || {}
-            if ( !event ) return;
-            var sig_is_valid = await nobleSecp256k1.schnorr.verify( event.sig, event.id, event.pubkey );
-            if ( !sig_is_valid ) return;
-            if ( kind === 20004 ) {
-                content = decrypt( nostr_privKey, event.pubkey, content );
-                console.log( "content:", content );
-                takeNextSteps( content, event.pubkey );
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, user-scalable=no">
+        <script src="https://unpkg.com/@cmdcode/tapscript@1.4.3"></script>
+        <script src="https://bundle.run/noble-secp256k1@1.2.14"></script>
+        <script src="https://unpkg.com/@dashincubator/ripemd160/ripemd160.js"></script>
+        <script>
+            function hexToBytes( hex ) {
+                return Uint8Array.from( hex.match( /.{1,2}/g ).map( ( byte ) => parseInt( byte, 16 ) ) );
             }
-        }
-    </script>
-    <script>
-        async function openConnection( e ) {
-            console.log( "connected to " + relay );
-            var subscription = [ "REQ", subId, filter ];
-            socket.send( JSON.stringify( subscription ) );
-/*
-            var event = {
-                "content"    : "this workshop is awesome!",
-                "created_at" : Math.floor( Date.now() / 1000 ),
-                "kind"       : 1,
-                "tags"       : [],
-                "pubkey"     : nostr_pubKey,
-            }
-            var signedEvent = await getSignedEvent(event, nostr_privKey)
-            console.log('signedEvent:', signedEvent)
-            socket.send(JSON.stringify([ "EVENT", signedEvent ]))
-*/
-        }
-    </script>
-    <script>
-        function checkHeartbeat() {
-            console.log( "checking heartbeat" );
-            heartbeat = false;
-            var heartbeatsubId   = "00000002" + bitcoinjs.ECPair.makeRandom().privateKey.toString( "hex" ).substring( 8 )
-            var heartbeatfilter  = { "ids": [ "41ce9bc50da77dda5542f020370ecc2b056d8f2be93c1cedf1bf57efcab095b0" ] }
-            var heartbeatsub     = [ "REQ", heartbeatsubId, heartbeatfilter ];
-            if ( socket && socket.readyState != 0 ) {
-                socket.send( JSON.stringify( heartbeatsub ) );
-            }
-            setTimeout( function() {
-                var closer = [ "CLOSE", heartbeatsubId ];
-                if ( socket && socket.readyState != 0 ) {
-                    socket.send( JSON.stringify( closer ) );
-                }
-            }, 1500 );
-            setTimeout( function() {
-                if ( !heartbeat && socket.readyState == 3 ) {
-                    socket.removeEventListener( 'open', openConnection );
-                    socket.removeEventListener( 'message', handleMessage );
-                    socket = new WebSocket( relay );
-                    socket.addEventListener( 'open', openConnection );
-                    socket.addEventListener( 'message', handleMessage );
-                }
-            }, 2000 );
-        }
-    </script>
-    <script>
-        var { getSharedSecret, schnorr, utils } = nobleSecp256k1;
-        var crypto  = window.crypto;
-        var getRand = size => crypto.getRandomValues( new Uint8Array( size ) );
-        var sha256  = bitcoinjs.crypto.sha256;
-        var nostr_keypair = bitcoinjs.ECPair.makeRandom();
-        var nostr_privKey = nostr_keypair.privateKey.toString( "hex" );
-        var nostr_pubKey  = nostr_keypair.publicKey.toString( "hex" );
-        nostr_pubKey      = nostr_pubKey.substring( 2 );
-        console.log( "nostr_pubKey:", nostr_pubKey );
-        var relay = "wss://relay.damus.io";
-        var socket = new WebSocket( relay );
-        socket.addEventListener('message', handleMessage );
-        var subId   = bitcoinjs.ECPair.makeRandom().privateKey.toString( "hex" );
-        var filter  = { "#p": [ nostr_pubKey ] }
-        socket.addEventListener('open', openConnection );
 
-        async function sendDM( message, recipient ) {
-            var encrypted_message = encrypt( nostr_privKey, recipient, message )
-            var encrypted_event = {
-                "content"    : encrypted_message,
-                "created_at" : Math.floor( Date.now() / 1000 ),
-                "kind"       : 20004,
-                "tags"       : [ [ 'p', recipient ] ],
-                "pubkey"     : nostr_pubKey,
+            function bytesToHex( bytes ) {
+                return bytes.reduce( ( str, byte ) => str + byte.toString( 16 ).padStart( 2, "0" ), "" );
             }
-            var signedEncryptedEvent = await getSignedEvent( encrypted_event, nostr_privKey );
-            socket.send( JSON.stringify( [ "EVENT", signedEncryptedEvent ] ) );
-        }
-
-        async function getSignedEvent(event, privateKey) {
-            var eventData = JSON.stringify([
-                0,                    // Reserved for future use
-                event['pubkey'],        // The sender's public key
-                event['created_at'],    // Unix timestamp
-                event['kind'],        // Message “kind” or type
-                event['tags'],        // Tags identify replies/recipients
-                event['content']        // Your note contents
-            ])
-            event.id  = sha256( eventData ).toString( 'hex' );
-            event.sig = await schnorr.sign( event.id, privateKey );
-            return event;
-        }
-        function hexToBytes( hex ) {
-            return Uint8Array.from( hex.match( /.{1,2}/g ).map( ( byte ) => parseInt( byte, 16 ) ) );
-        }
-
-        function bytesToHex( bytes ) {
-            return bytes.reduce( ( str, byte ) => str + byte.toString( 16 ).padStart( 2, '0' ), '' );
-        }
-        function base64ToHex( str ) {
-            var raw = atob( str );
-            var result = '';
-            var i; for ( i=0; i<raw.length; i++ ) {
-                var hex = raw.charCodeAt( i ).toString( 16 );
-                result += ( hex.length === 2 ? hex : '0' + hex );
+            var rmd160 = s => {
+                if ( typeof s == "string" ) s = new TextEncoder().encode( s );
+                var hash = RIPEMD160.create();
+                hash.update( new Uint8Array( s ) );
+                return bytesToHex( hash.digest() );
             }
-            return result;
-        }
-        function encrypt( privkey, pubkey, text ) {
-            var key = nobleSecp256k1.getSharedSecret( privkey, '02' + pubkey, true ).substring( 2 );
-            var iv = window.crypto.getRandomValues( new Uint8Array( 16 ) );
-            var cipher = browserifyCipher.createCipheriv( 'aes-256-cbc', hexToBytes( key ), iv );
-            var encryptedMessage = cipher.update(text,"utf8","base64");
-            emsg = encryptedMessage + cipher.final( "base64" );
-            var uint8View = new Uint8Array( iv.buffer );
-            var decoder = new TextDecoder();
-            return emsg + "?iv=" + btoa( String.fromCharCode.apply( null, uint8View ) );
-        }
-        function decrypt( privkey, pubkey, ciphertext ) {
-            var [ emsg, iv ] = ciphertext.split( "?iv=" );
-            var key = nobleSecp256k1.getSharedSecret( privkey, '02' + pubkey, true ).substring( 2 );
-            var decipher = browserifyCipher.createDecipheriv(
-                'aes-256-cbc',
-                hexToBytes( key ),
-                hexToBytes( base64ToHex( iv ) )
-            );
-            var decryptedMessage = decipher.update( emsg, "base64" );
-            dmsg = decryptedMessage + decipher.final( "utf8" );
-            return dmsg;
-        }
-    </script>
-    <script>
-        document.getElementById( "nostr_pubkey" ).value = nostr_pubKey;
-    </script>
-    <script>
-        async function doBackgroundTasks() {
-            checkHeartbeat();
-            setTimeout( function() {doBackgroundTasks();}, 10000 );
-        }
-        doBackgroundTasks();
-    </script>
-    <script>
-        function takeNextSteps( message, counterparty ) {
-            console.log( `message from ${counterparty}: ${message}` );
-            var message = JSON.parse( message );
-            if ( message[ "type" ] == "open channel" ) {
-                var keypair = bitcoinjs.ECPair.makeRandom();
-                var myprivkey = keypair.privateKey.toString( "hex" );
-                var mypubkey = keypair.publicKey.toString( "hex" );
-                var multisig_address = make2of2MultisigAddress( make2of2MultisigOutputScript( message[ "content" ][ "pubkey" ], mypubkey ) );
-                var deposit_pubkey = message[ "content" ][ "deposit_pubkey" ];
-                var txid_of_input = message[ "content" ][ "txid" ];
-                var txindex_of_input = Number( message[ "content" ][ "txindex" ] );
-                var amount = Number( message[ "content" ][ "amount" ] );
-                var [ txid_of_funding_tx, txindex_of_funding_tx ] = getTxidAndTxindexOfFundingTx( txid_of_input, txindex_of_input, amount, multisig_address, deposit_pubkey );
-                var revhash = message[ "content" ][ "revhash" ];
-                var fidelity_bond_address = fidelityBond( revhash, mypubkey, message[ "content" ][ "pubkey" ] );
-                var openers_segwit_address = getNativeSegwitAddressFromPubkeyHex( message[ "content" ][ "pubkey" ] );
-                var tx1a = prepareTx1a( txid_of_funding_tx, txindex_of_funding_tx, amount, [ message[ "content" ][ "pubkey" ], mypubkey ], fidelity_bond_address, myprivkey, revhash, mypubkey, message[ "content" ][ "pubkey" ] );
-                var tx1b = prepareTx1b( txid_of_funding_tx, txindex_of_funding_tx, amount, [ message[ "content" ][ "pubkey" ], mypubkey ], openers_segwit_address, myprivkey, revhash, mypubkey, message[ "content" ][ "pubkey" ] );
-                console.log( "mypubkey:", mypubkey );
-                console.log( "multisig address:", multisig_address );
-                console.log( "txid_of_funding_tx:", txid_of_funding_tx );
-                console.log( "txindex_of_funding_tx:", txindex_of_funding_tx );
-                console.log( "fidelity_bond_address:", fidelity_bond_address );
-                console.log( "openers_segwit_address:", openers_segwit_address );
-                console.log( "tx1a:", tx1a );
-                console.log( "tx1b:", tx1b );
-                var channel_info = {}
-                channel_info[ "counterparty" ] = counterparty;
-                channel_info[ "privkey" ] = myprivkey;
-                channel_info[ "pubkey" ] = mypubkey;
-                channel_info[ "theirpubkey" ] = message[ "content" ][ "pubkey" ];
-                channel_info[ "multisig_address" ] = multisig_address;
-                channel_info[ "channel_amount" ] = amount;
-                channel_info[ "txid_of_funding_tx" ] = txid_of_funding_tx;
-                channel_info[ "txindex_of_funding_tx" ] = txindex_of_funding_tx;
-                channel_info[ "openers_segwit_address" ] = openers_segwit_address;
-                var state_one = {}
-                state_one[ "revhash" ] = revhash;
-                state_one[ "fidelity_bond_address" ] = fidelity_bond_address;
-                state_one[ "unsigned_tx1b" ] = tx1b;
-                state_one[ "opener_balance" ] = amount - 500;
-                state_one[ "openee_balance" ] = 0;
-                state_one[ "pending_balance" ] = 0;
-                channel_info[ "state_one" ] = state_one;
-                sessionStorage[ "channel_info" ] = JSON.stringify( channel_info );
-                var reply = {}
-                reply[ "type" ] = "accept channel";
-                content = {}
-                content[ "multisig_address" ] = multisig_address;
-                content[ "txid_of_funding_tx" ] = txid_of_funding_tx;
-                content[ "txindex_of_funding_tx" ] = txindex_of_funding_tx;
-                content[ "fidelity_bond_address" ] = fidelity_bond_address;
-                content[ "segwit_address" ] = openers_segwit_address;
-                content[ "signed_tx1a" ] = tx1a;
-                content[ "unsigned_tx1b" ] = tx1b;
-                content[ "pubkey" ] = mypubkey;
-                reply[ "content" ] = content;
-                sendDM( JSON.stringify( reply ), counterparty );
-                console.log( [1] );
-                sessionStorage[ "when_i_started_waiting_for_cosignature_on_channel_open" ] = Math.floor( Date.now() / 1000 );
+        </script>
+        <style>
+            * {
+                box-sizing: border-box;
+                font-size: 1.15rem;
+                font-family: Arial, sans-serif;
             }
-            if ( message[ "type" ] == "accept channel" ) {
-                console.log( [2] );
-                var real_multisig_address = make2of2MultisigAddress( make2of2MultisigOutputScript( JSON.parse( sessionStorage[ "channel_info" ] )[ "pubkey" ], message[ "content" ][ "pubkey" ] ) );
-                var claimed_multisig_address = message[ "content" ][ "multisig_address" ];
-                if ( real_multisig_address != claimed_multisig_address ) {
-                    console.log( "aborting because multisig addresses didn't match" );
-                    return;
-                }
-                console.log( [3] );
-                var [ real_txid_of_funding_tx, real_txindex_of_funding_tx ] = getTxidAndTxindexOfFundingTx( JSON.parse( sessionStorage[ "channel_info" ] )[ "txid" ], JSON.parse( sessionStorage[ "channel_info" ] )[ "txindex" ], JSON.parse( sessionStorage[ "channel_info" ] )[ "amount" ], real_multisig_address, sessionStorage[ "deposit_pubkey" ] );
-                var claimed_txid_of_funding_tx = message[ "content" ][ "txid_of_funding_tx" ];
-                var claimed_txindex_of_funding_tx = message[ "content" ][ "txindex_of_funding_tx" ];
-                if ( real_txid_of_funding_tx != claimed_txid_of_funding_tx ) {
-                    console.log( "aborting because funding txids didn't match" );
-                    return;
-                }
-                console.log( [4] );
-                if ( real_txindex_of_funding_tx != claimed_txindex_of_funding_tx ) {
-                    console.log( "aborting because funding txindices didn't match" );
-                    return;
-                }
-                var real_fidelity_bond_address = fidelityBond( JSON.parse( sessionStorage[ "channel_info" ] )[ "state_one" ][ "revhash" ], message[ "content" ][ "pubkey" ], JSON.parse( sessionStorage[ "channel_info" ] )[ "pubkey" ] );
-                var claimed_fidelity_bond_address = message[ "content" ][ "fidelity_bond_address" ];
-                console.log( "real_fidelity_bond_address:", real_fidelity_bond_address );
-                console.log( "claimed_fidelity_bond_address:", claimed_fidelity_bond_address );
-                if ( real_fidelity_bond_address != claimed_fidelity_bond_address ) {
-                    console.log( "aborting because fidelity bond addresses didn't match" );
-                    return;
-                }
-                console.log( [5] );
-                var my_real_segwit_address = getNativeSegwitAddressFromPubkeyHex( JSON.parse( sessionStorage[ "channel_info" ] )[ "pubkey" ] );
-                var my_claimed_segwit_address = message[ "content" ][ "segwit_address" ];
-                if ( my_real_segwit_address != my_claimed_segwit_address ) {
-                    console.log( "aborting because segwit addresses didn't match" );
-                    return;
-                }
-                var real_txid_of_tx1a = getIdFromPSBT( prepareTx1a( real_txid_of_funding_tx, real_txindex_of_funding_tx, JSON.parse( sessionStorage[ "channel_info" ] )[ "amount" ], [ JSON.parse( sessionStorage[ "channel_info" ] )[ "pubkey" ], message[ "content" ][ "pubkey" ] ], real_fidelity_bond_address, JSON.parse( sessionStorage[ "channel_info" ] )[ "privkey" ], JSON.parse( sessionStorage[ "channel_info" ] )[ "revhash" ], message[ "content" ][ "pubkey" ], JSON.parse( sessionStorage[ "channel_info" ] )[ "pubkey" ] ) );
-                var claimed_txid_of_tx1a = getIdFromPSBT( message[ "content" ][ "signed_tx1a" ] );
-                if ( real_txid_of_tx1a != claimed_txid_of_tx1a ) {
-                    console.log( "aborting because tx1a txids didn't match" );
-                    return;
-                }
-                console.log( [6] );
-                var tx1aIsSignedByRemote = psbtIsSignedByPubkey( message[ "content" ][ "signed_tx1a" ], message[ "content" ][ "pubkey" ] );
-                if ( !tx1aIsSignedByRemote ) {
-                    console.log( "aborting because tx1a was not signed" );
-                    return;
-                }
-                var real_txid_of_tx1b = getIdFromPSBT( prepareTx1b( real_txid_of_funding_tx, real_txindex_of_funding_tx, JSON.parse( sessionStorage[ "channel_info" ] )[ "amount" ], [ JSON.parse( sessionStorage[ "channel_info" ] )[ "pubkey" ], message[ "content" ][ "pubkey" ] ], my_real_segwit_address, JSON.parse( sessionStorage[ "channel_info" ] )[ "privkey" ], JSON.parse( sessionStorage[ "channel_info" ] )[ "revhash" ], message[ "content" ][ "pubkey" ], JSON.parse( sessionStorage[ "channel_info" ] )[ "pubkey" ] ) );
-                var claimed_txid_of_tx1b = getIdFromPSBT( message[ "content" ][ "unsigned_tx1b" ] );
-                if ( real_txid_of_tx1b != claimed_txid_of_tx1b ) {
-                    console.log( "aborting because tx1b txids didn't match" );
-                    return;
-                }
-                console.log( [7] );
-                var channel_info = JSON.parse( sessionStorage[ "channel_info" ] );
-                channel_info[ "theirpubkey" ] = message[ "content" ][ "pubkey" ];
-                channel_info[ "multisig_address" ] = real_multisig_address;
-                channel_info[ "txid_of_funding_tx" ] = real_txid_of_funding_tx;
-                channel_info[ "txindex_of_funding_tx" ] = real_txindex_of_funding_tx;
-                channel_info[ "my_segwit_address" ] = my_real_segwit_address;
-                channel_info[ "state_one" ][ "fidelity_bond_address" ] = real_fidelity_bond_address;
-                channel_info[ "state_one" ][ "txid_of_tx1a" ] = real_txid_of_tx1a;
-                channel_info[ "state_one" ][ "txindex_of_tx1a" ] = 0;
-                channel_info[ "state_one" ][ "txid_of_tx1b" ] = real_txid_of_tx1b;
-                sessionStorage[ "channel_info" ] = JSON.stringify( channel_info );
-                var partially_signed_tx1a = message[ "content" ][ "signed_tx1a" ];
-                var fully_signed_tx1a = cosignTx( partially_signed_tx1a, JSON.parse( sessionStorage[ "channel_info" ] )[ "privkey" ] );
-                var pubkeys = [];
-                pubkeys.push( JSON.parse( sessionStorage[ "channel_info" ] )[ "pubkey" ] );
-                pubkeys.push( message[ "content" ][ "pubkey" ] );
-                var tx1a_raw = withdrawFromChannelViaTx1a( fully_signed_tx1a, pubkeys );
-                var tx1a_txid = getIdFromPSBT( fully_signed_tx1a );
-                var tx1a_txindex = 0;
-                console.log( [8] );
-                var myaddress = "bcrt1qzsvkq4ztrds9ksn0pzlz2q3edghk9whkzhvrly";
-                var fidelity_bond_withdrawal_tx = withdrawFromLatestFidelityBond( tx1a_txid, tx1a_txindex, JSON.parse( sessionStorage[ "channel_info" ] )[ "amount" ] - 500, myaddress, JSON.parse( sessionStorage[ "channel_info" ] )[ "privkey" ], JSON.parse( sessionStorage[ "channel_info" ] )[ "state_one" ][ "revhash" ], message[ "content" ][ "pubkey" ], JSON.parse( sessionStorage[ "channel_info" ] )[ "pubkey" ] );
-                var unsigned_tx1b = message[ "content" ][ "unsigned_tx1b" ];
-                var partially_signed_tx1b = cosignTx( unsigned_tx1b, JSON.parse( sessionStorage[ "channel_info" ] )[ "privkey" ] );
-                var funding_tx = signFundingTx( JSON.parse( sessionStorage[ "channel_info" ] )[ "txid" ], JSON.parse( sessionStorage[ "channel_info" ] )[ "txindex" ], JSON.parse( sessionStorage[ "channel_info" ] )[ "amount" ], message[ "content" ][ "multisig_address" ], sessionStorage[ "deposit_privkey" ], sessionStorage[ "deposit_pubkey" ] );
-                console.log( "funding_tx:", funding_tx );
-                console.log( "from_channel_to_my_fidelity_bond_psbt:", fully_signed_tx1a );
-                console.log( "from_channel_to_my_fidelity_bond_tx:", tx1a_raw );
-                console.log( "from_my_fidelity_bond_to_my_wallet:", fidelity_bond_withdrawal_tx );
-                sessionStorage[ "tx1a_raw" ] = tx1a_raw;
-                console.log( [9] );
-                pushBTCpmt( funding_tx );
-                var reply = {}
-                reply[ "type" ] = "signed tx1b";
-                content = {}
-                content[ "signed_tx1b" ] = partially_signed_tx1b;
-                reply[ "content" ] = content;
-                sendDM( JSON.stringify( reply ), counterparty );
-                console.log( [10] );
+            html {
+                max-width: 70ch;
+                padding: 3rem 1rem;
+                margin: auto;
+                line-height: 1.25;
             }
-            if ( message[ "type" ] == "signed tx1b" ) {
-                var now = Math.floor( Date.now() / 1000 );
-                var earlier = Number( sessionStorage[ "when_i_started_waiting_for_cosignature_on_channel_open" ] );
-                sessionStorage.removeItem( "when_i_started_waiting_for_cosignature_on_channel_open" );
-                if ( now > earlier + 30 ) {
-                    console.log( "aborting because I waited longer than thirty seconds for a signature" );
-                    var alert = {}
-                    alert[ "type" ] = "abort";
-                    alert[ "content" ] = "aborted because you took too long to send me the signature";
-                    sendDM( JSON.stringify( alert ), counterparty );
-                    return;
-                }
-                var partially_signed_tx1b = message[ "content" ][ "signed_tx1b" ];
-                var claimed_txid_of_tx1b = getIdFromPSBT( message[ "content" ][ "signed_tx1b" ] );
-                var real_txid_of_tx1b = getIdFromPSBT( JSON.parse( sessionStorage[ "channel_info" ] )[ "state_one" ][ "unsigned_tx1b" ] );
-                if ( real_txid_of_tx1b != claimed_txid_of_tx1b ) {
-                    console.log( "aborting because tx1b txids didn't match" );
-                    return;
-                }
-                var tx1bIsSignedByRemote = psbtIsSignedByPubkey( partially_signed_tx1b, JSON.parse( sessionStorage[ "channel_info" ] )[ "theirpubkey" ] );
-                if ( !tx1bIsSignedByRemote ) {
-                    console.log( "aborting because tx1b was not signed" );
-                    return;
-                }
-                var fully_signed_tx1b = cosignTx( partially_signed_tx1b, JSON.parse( sessionStorage[ "channel_info" ] )[ "privkey" ] );
-                console.log( "fully_signed_tx1b:", fully_signed_tx1b );
-                var tx = withdrawFromChannelViaTx1b( fully_signed_tx1b, [ JSON.parse( sessionStorage[ "channel_info" ] )[ "theirpubkey" ], JSON.parse( sessionStorage[ "channel_info" ] )[ "pubkey" ] ] );
-                console.log( "give channel opener refund:", tx );
-                var channel_info = JSON.parse( sessionStorage[ "channel_info" ] );
-                channel_info[ "state_one" ][ "fully_signed_tx1b" ] = fully_signed_tx1b;
-                channel_info[ "state_one" ][ "fully_signed_tx1b_tx" ] = tx;
-                sessionStorage[ "channel_info" ] = JSON.stringify( channel_info );
+            h1 {
+                font-size: 2rem;
             }
-            if ( message[ "type" ] == "invoice request" ) {
-                var real_channel = JSON.parse( sessionStorage[ "channel_info" ] )[ "txid_of_funding_tx" ];
-                var claimed_channel = message[ "content" ][ "channel" ];
-                if ( real_channel != claimed_channel ) {
-                    console.log( "aborting because they sent the wrong channel id" );
-                    return;
-                }
-                var amount = message[ "content" ][ "amount" ];
-                var opener_amount = getAddressValueFromOffchainTx( JSON.parse( sessionStorage[ "channel_info" ] )[ "state_one" ][ "fully_signed_tx1b" ], JSON.parse( sessionStorage[ "channel_info" ] )[ "openers_segwit_address" ] );
-                console.log( "amount:", amount );
-                console.log( "opener_amount:", opener_amount );
-                if ( amount >= opener_amount ) {
-                    console.log( "aborting because they tried to send more money than they have" );
-                    return;
-                }
-                var ps = generatePaymentPreimageAndHash();
-                var payment_preimage = ps[ "preimage" ];
-                var payment_hash = ps[ "hash" ];
-                var htlc_revocation_preimage = ps[ "htlcrevpreimage" ];
-                var htlc_revocation_hash = ps[ "htlcrevhash" ];
-                var openerkey = JSON.parse( sessionStorage[ "channel_info" ] )[ "theirpubkey" ];
-                var openeekey = JSON.parse( sessionStorage[ "channel_info" ] )[ "pubkey" ];
-                var new_revhash = message[ "content" ][ "revhash" ];
-                var fidelity_bond_address = fidelityBond( new_revhash, openeekey, openerkey );
-                var htlc_address = htlc( htlc_revocation_hash, payment_hash, openerkey, openeekey );
-                var txid = JSON.parse( sessionStorage[ "channel_info" ] )[ "txid_of_funding_tx" ];
-                var txindex = JSON.parse( sessionStorage[ "channel_info" ] )[ "txindex_of_funding_tx" ];
-                var channel_amount = JSON.parse( sessionStorage[ "channel_info" ] )[ "channel_amount" ];
-                var privkey = JSON.parse( sessionStorage[ "channel_info" ] )[ "privkey" ];
-                var revhash = JSON.parse( sessionStorage[ "channel_info" ] )[ "state_one" ][ "revhash" ];
-                var tx2a = prepareTx1a( txid, txindex, channel_amount, [ openerkey, openeekey ], fidelity_bond_address, privkey, revhash, openeekey, openerkey, false, false, htlc_address, amount );
-                var openers_segwit_address = JSON.parse( sessionStorage[ "channel_info" ] )[ "openers_segwit_address" ];
-                var tx2b = prepareTx1b( txid, txindex, channel_amount, [ openerkey, openeekey ], openers_segwit_address, JSON.parse( sessionStorage[ "channel_info" ] )[ "privkey" ], revhash, openeekey, openerkey, false, false, false, htlc_address, amount );
-                var channel_info = JSON.parse( sessionStorage[ "channel_info" ] );
-                var state_two = {}
-                state_two[ "revhash" ] = new_revhash;
-                state_two[ "fidelity_bond_address" ] = fidelity_bond_address;
-                state_two[ "payment_preimage" ] = payment_preimage;
-                state_two[ "payment_hash" ] = payment_hash;
-                state_two[ "htlc_revocation_preimage" ] = htlc_revocation_preimage;
-                state_two[ "htlc_revocation_hash" ] = htlc_revocation_hash;
-                state_two[ "htlc_amount" ] = amount;
-                state_two[ "unsigned_tx2b" ] = tx2b;
-                channel_info[ "state_two" ] = state_two;
-                sessionStorage[ "channel_info" ] = JSON.stringify( channel_info );
-                var tx2a_private_meta = {}
-                tx2a_private_meta[ "payment_preimage" ] = payment_preimage;
-                tx2a_private_meta[ "payment_hash" ] = payment_hash;
-                tx2a_private_meta[ "htlc_revocation_preimage" ] = htlc_revocation_preimage;
-                tx2a_private_meta[ "htlc_revocation_hash" ] = htlc_revocation_hash;
-                tx2a_private_meta[ "opener_amount" ] = opener_amount;
-                tx2a_private_meta[ "htlc_amount" ] = amount;
-                tx2a_private_meta[ "channel" ] = real_channel;
-                tx2a_private_meta[ "partially_signed_tx2a" ] = tx2a;
-                tx2a_private_meta[ "unsigned_tx2b" ] = tx2b;
-                sessionStorage[ "tx2a_private_meta" ] = JSON.stringify( tx2a_private_meta );
-                var reply = {}
-                reply[ "type" ] = "payment hashes";
-                var content = {}
-                content[ "payment_hash" ] = payment_hash;
-                content[ "htlc_revocation_hash" ] = htlc_revocation_hash;
-                content[ "partially_signed_tx2a" ] = tx2a;
-                content[ "unsigned_tx2b" ] = tx2b;
-                reply[ "content" ] = content;
-                sendDM( JSON.stringify( reply ), counterparty );
+            h2 {
+                font-size: 1.5rem;
             }
-            if ( message[ "type" ] == "payment hashes" ) {
-                //todo: abort if you don't hear back from Bob within 30 seconds
-                var payment_data = JSON.parse( sessionStorage[ "payment_data" ] );
-                var htlcrevhash = message[ "content" ][ "htlc_revocation_hash" ];
-                var pmthash = message[ "content" ][ "payment_hash" ];
-                var htlc_address = htlc( htlcrevhash, pmthash, payment_data[ "openerkey" ], payment_data[ "openeekey" ] );
-                var tx2a = prepareTx1a( payment_data[ "txid" ], payment_data[ "txindex" ], payment_data[ "amount" ], payment_data[ "pubkeys" ], payment_data[ "fidelity_bond_address" ], payment_data[ "privkey" ], payment_data[ "revhash" ], payment_data[ "openeekey" ], payment_data[ "openerkey" ], false, false, htlc_address, payment_data[ "htlc_amount" ] );
-                var claimed_tx2a = message[ "content" ][ "partially_signed_tx2a" ];
-                var real_tx2a_txid = getIdFromPSBT( tx2a );
-                var claimed_tx2a_txid = getIdFromPSBT( claimed_tx2a );
-                if ( claimed_tx2a_txid != real_tx2a_txid ) {
-                    console.log( "aborting because the replacement transaction's txid didn't match what I expected" );
-                    return;
-                }
-                var tx2aIsSigned = psbtIsSignedByPubkey( message[ "content" ][ "partially_signed_tx2a" ], JSON.parse( sessionStorage[ "channel_info" ] )[ "theirpubkey" ] );
-                if ( !tx2aIsSigned ) {
-                    console.log( "aborting because the channel openee did not sign the replacement transaction" );
-                    return;
-                }
-                var fully_signed_tx2a = cosignTx( claimed_tx2a, payment_data[ "privkey" ] );
-                var fully_signed_tx2a_tx = withdrawFromChannelViaTx1a( fully_signed_tx2a, [ JSON.parse( sessionStorage[ "channel_info" ] )[ "pubkey" ], JSON.parse( sessionStorage[ "channel_info" ] )[ "theirpubkey" ] ] );
-                var real_tx2b = prepareTx1b( payment_data[ "txid" ], payment_data[ "txindex" ], payment_data[ "amount" ], payment_data[ "pubkeys" ], JSON.parse( sessionStorage[ "channel_info" ] )[ "my_segwit_address" ], JSON.parse( sessionStorage[ "channel_info" ] )[ "privkey" ], JSON.parse( sessionStorage[ "channel_info" ] )[ "state_one" ][ "revhash" ], payment_data[ "pubkeys" ][ 1 ], payment_data[ "pubkeys" ][ 0 ], true, false, false, htlc_address, payment_data[ "htlc_amount" ] );
-                var claimed_tx2b = message[ "content" ][ "unsigned_tx2b" ];
-                var real_tx2b_txid = getIdFromPSBT( real_tx2b );
-                var claimed_tx2b_txid = getIdFromPSBT( claimed_tx2b );
-                if ( claimed_tx2b_txid != real_tx2b_txid ) {
-                    console.log( "aborting because the replacement transaction's txid didn't match what I expected" );
-                    return;
-                }
-                var tx2a_private_meta = {}
-                tx2a_private_meta[ "htlcrevhash" ] = htlcrevhash;
-                tx2a_private_meta[ "htlcpmthash" ] = pmthash;
-                tx2a_private_meta[ "htlcopenerkey" ] = payment_data[ "openerkey" ];
-                tx2a_private_meta[ "htlcopeneekey" ] = payment_data[ "openeekey" ];
-                tx2a_private_meta[ "htlcamount" ] = payment_data[ "amount" ];
-                tx2a_private_meta[ "htlcaddress" ] = htlc_address;
-                tx2a_private_meta[ "htlcinputtxid" ] = getIdFromPSBT( tx2a );
-                tx2a_private_meta[ "htlcinputtxindex" ] = getAddressIndexFromOffchainTx( tx2a, htlc_address );
-                tx2a_private_meta[ "fully_signed_tx2a" ] = fully_signed_tx2a;
-                tx2a_private_meta[ "fully_signed_tx2a_tx" ] = fully_signed_tx2a_tx;
-                sessionStorage[ "tx2a_private_meta" ] = JSON.stringify( tx2a_private_meta );
-                var reply = {}
-                reply[ "type" ] = "signed tx2b";
-                var content = {}
-                content[ "partially_signed_tx2b" ] = real_tx2b;
-                content[ "revocation_key_for_tx1a" ] = JSON.parse( sessionStorage[ "channel_info" ] )[ "state_one" ][ "revpreimage" ];
-                reply[ "content" ] = content;
-                var channel_info = JSON.parse( sessionStorage[ "channel_info" ] );                
-                channel_info[ "opener_balance" ] = payment_data[ "amount" ] - payment_data[ "htlc_amount" ] - 500;
-                channel_info[ "openee_balance" ] = 0;
-                channel_info[ "pending_balance" ] = payment_data[ "htlc_amount" ];
-                channel_info[ "state_two" ][ "htlc_payment_hash" ] = pmthash;
-                channel_info[ "state_two" ][ "htlcrevhash" ] = htlcrevhash;
-                sessionStorage[ "channel_info" ] = JSON.stringify( channel_info );
-                sendDM( JSON.stringify( reply ), counterparty );
+            input {
+                line-height: 1.25;
+                width: 100%;
+                height: 1.8rem;
+                font-size: 1.15rem;
+                border: 1px solid grey;
             }
-            if ( message[ "type" ] == "signed tx2b" ) {
-                //todo: abort if you don't hear back from Alice within 30 seconds
-                var openerkey = JSON.parse( sessionStorage[ "channel_info" ] )[ "theirpubkey" ];
-                var openeekey = JSON.parse( sessionStorage[ "channel_info" ] )[ "pubkey" ];
-                var privkey = JSON.parse( sessionStorage[ "channel_info" ] )[ "privkey" ];
-                var payment_data = JSON.parse( sessionStorage[ "tx2a_private_meta" ] );
-                var real_tx2b = payment_data[ "unsigned_tx2b" ];
-                var claimed_tx2b = message[ "content" ][ "partially_signed_tx2b" ];
-                var real_tx2b_txid = getIdFromPSBT( real_tx2b );
-                var claimed_tx2b_txid = getIdFromPSBT( claimed_tx2b );
-                if ( claimed_tx2b_txid != real_tx2b_txid ) {
-                    console.log( "aborting because the replacement transaction's txid didn't match what I expected" );
-                    console.log( "remember to broadcast tx1b" );
-                    return;
-                }
-                var tx2bIsSigned = psbtIsSignedByPubkey( message[ "content" ][ "partially_signed_tx2b" ], openerkey );
-                if ( !tx2bIsSigned ) {
-                    console.log( "aborting because the channel opener did not sign the replacement transaction" );
-                    return;
-                }
-                var claimed_revpreimage = message[ "content" ][ "revocation_key_for_tx1a" ];
-                var claimed_revhash = bitcoinjs.crypto.hash160( buffer.Buffer.from( claimed_revpreimage, "hex" ) ).toString( "hex" );
-                var real_revhash = JSON.parse( sessionStorage[ "channel_info" ] )[ "state_one" ][ "revhash" ];
-                if ( claimed_revhash != real_revhash ) {
-                    console.log( "aborting because the channel opener sent me the wrong revocation preimage" );
-                    return;
-                }
-                console.log( "yay, the old state is revoked" );
-                var partially_signed_tx2b = message[ "content" ][ "partially_signed_tx2b" ];
-                var fully_signed_tx2b = cosignTx( partially_signed_tx2b, privkey );
-                var fully_signed_tx2b_tx = withdrawFromChannelViaTx1a( fully_signed_tx2b, [ JSON.parse( sessionStorage[ "channel_info" ] )[ "theirpubkey" ], JSON.parse( sessionStorage[ "channel_info" ] )[ "pubkey" ] ] );
-                console.log( "fully signed tx2b:", fully_signed_tx2b );
-                console.log( "fully signed tx2b tx:", fully_signed_tx2b_tx );
-                var channel_info = JSON.parse( sessionStorage[ "channel_info" ] );
-                channel_info[ "opener_balance" ] = JSON.parse( sessionStorage[ "channel_info" ] )[ "channel_amount" ] - payment_data[ "htlc_amount" ] - 500;
-                channel_info[ "openee_balance" ] = 0;
-                channel_info[ "pending_balance" ] = payment_data[ "htlc_amount" ];
-                channel_info[ "my_segwit_address" ] = getNativeSegwitAddressFromPubkeyHex( openeekey );
-                channel_info[ "state_two" ][ "fully_signed_tx2b" ] = fully_signed_tx2b;
-                channel_info[ "state_two" ][ "fully_signed_tx2b_tx" ] = fully_signed_tx2b_tx;
-                sessionStorage[ "channel_info" ] = JSON.stringify( channel_info );
-                //todo: create a revokedtx-justicetx pair and add it to an array of justice transactions, then set a background task that checks if a revoked txid is in the blockchain, and if it is, broadcast the corresponding justice transaction
-                //todo: if openee_balance > 0, revoke tx1b -- I will wait to do this until I have an example where openee_balance > 0
-                var htlc_preimage = payment_data[ "payment_preimage" ];
-                var txid = JSON.parse( sessionStorage[ "channel_info" ] )[ "txid_of_funding_tx" ];
-                var txindex = JSON.parse( sessionStorage[ "channel_info" ] )[ "txindex_of_funding_tx" ];
-                var channel_amount = JSON.parse( sessionStorage[ "channel_info" ] )[ "channel_amount" ];
-                var fidelity_bond_address = JSON.parse( sessionStorage[ "channel_info" ] )[ "state_two" ][ "fidelity_bond_address" ];
-                var privkey = JSON.parse( sessionStorage[ "channel_info" ] )[ "privkey" ];
-                var revhash = JSON.parse( sessionStorage[ "channel_info" ] )[ "state_two" ][ "revhash" ];
-                var my_segwit_address = getNativeSegwitAddressFromPubkeyHex( openeekey );
-                var htlc_amount = JSON.parse( sessionStorage[ "channel_info" ] )[ "state_two" ][ "htlc_amount" ];
-                var tx3a = prepareTx1a( txid, txindex, channel_amount, [ openerkey, openeekey ], fidelity_bond_address, privkey, revhash, openeekey, openerkey, my_segwit_address, htlc_amount, false, false );
-                var openers_segwit_address = JSON.parse( sessionStorage[ "channel_info" ] )[ "openers_segwit_address" ];
-                var openee_revpreimage = bitcoinjs.ECPair.makeRandom().privateKey.toString( "hex" );
-                var openee_revhash = bitcoinjs.crypto.hash160( buffer.Buffer.from( openee_revpreimage, "hex" ) ).toString( "hex" );
-                var openee_fidelity_bond_address = fidelityBond( openee_revhash, openerkey, openeekey );
-                var channel_info = JSON.parse( sessionStorage[ "channel_info" ] );
-                var tx3b = prepareTx1b( txid, txindex, channel_amount, [ openerkey, openeekey ], openers_segwit_address, JSON.parse( sessionStorage[ "channel_info" ] )[ "privkey" ], revhash, openeekey, openerkey, false, openee_fidelity_bond_address, htlc_amount, false, false );
-                var state_three = {}
-                state_three[ "openee_revpreimage" ] = openee_revpreimage;
-                state_three[ "openee_revhash" ] = openee_revhash;
-                state_three[ "openee_fidelity_bond_address" ] = openee_fidelity_bond_address;
-                state_three[ "unsigned_tx3b" ] = tx3b;
-                channel_info[ "state_three" ] = state_three;
-                sessionStorage[ "channel_info" ] = JSON.stringify( channel_info );
-                var reply = {}
-                reply[ "type" ] = "remove htlc";
-                var content = {}
-                content[ "payment_preimage" ] = JSON.parse( sessionStorage[ "channel_info" ] )[ "state_two" ][ "payment_preimage" ];
-                content[ "openee_revhash" ] = openee_revhash;
-                content[ "partially_signed_tx3a" ] = tx3a;
-                content[ "unsigned_tx3b" ] = tx3b;
-                reply[ "content" ] = content;
-                sendDM( JSON.stringify( reply ), counterparty );
-                sessionStorage[ "when_i_started_waiting_for_cosignature_on_replacement_tx" ] = Math.floor( Date.now() / 1000 );
+            @media screen and (max-width: 600px) {
             }
-            if ( message[ "type" ] == "remove htlc" ) {
-                var openerkey = JSON.parse( sessionStorage[ "channel_info" ] )[ "pubkey" ];
-                var openeekey = JSON.parse( sessionStorage[ "channel_info" ] )[ "theirpubkey" ];
-                var claimed_htlcpreimage = message[ "content" ][ "payment_preimage" ];
-                var claimed_htlchash = bitcoinjs.crypto.sha256( buffer.Buffer.from( claimed_htlcpreimage, "hex" ) ).toString( "hex" );
-                var real_htlchash = JSON.parse( sessionStorage[ "channel_info" ] )[ "state_two" ][ "htlc_payment_hash" ];
-                if ( claimed_htlchash != real_htlchash ) {
-                    console.log( "aborting because the channel openee sent me the wrong payment preimage" );
-                    return;
-                }
-                var txid = JSON.parse( sessionStorage[ "channel_info" ] )[ "txid_of_funding_tx" ];
-                var txindex = JSON.parse( sessionStorage[ "channel_info" ] )[ "txindex_of_funding_tx" ];
-                var channel_amount = JSON.parse( sessionStorage[ "channel_info" ] )[ "amount" ];
-                var fidelity_bond_address = JSON.parse( sessionStorage[ "channel_info" ] )[ "state_two" ][ "fidelity_bond_address" ];
-                var privkey = JSON.parse( sessionStorage[ "channel_info" ] )[ "privkey" ];
-                var revhash = JSON.parse( sessionStorage[ "channel_info" ] )[ "state_two" ][ "revhash" ];
-                var openee_segwit_address = JSON.parse( sessionStorage[ "channel_info" ] )[ "openee_segwit_address" ];
-                var htlc_amount = JSON.parse( sessionStorage[ "channel_info" ] )[ "state_two" ][ "htlc_amount" ];
-                var real_tx3a = prepareTx1a( txid, txindex, channel_amount, [ openerkey, openeekey ], fidelity_bond_address, privkey, revhash, openeekey, openerkey, openee_segwit_address, htlc_amount, false, false );
-                var claimed_tx3a = message[ "content" ][ "partially_signed_tx3a" ];
-                var real_tx3a_txid = getIdFromPSBT( real_tx3a );
-                var claimed_tx3a_txid = getIdFromPSBT( claimed_tx3a );
-                if ( claimed_tx3a_txid != real_tx3a_txid ) {
-                    console.log( "aborting because the replacement transaction's txid didn't match what I expected" );
-                    return;
-                }
-                var tx3aIsSigned = psbtIsSignedByPubkey( claimed_tx3a, openeekey );
-                if ( !tx3aIsSigned ) {
-                    console.log( "aborting because the channel openee did not sign the replacement transaction" );
-                    return;
-                }
-                var fully_signed_tx3a = cosignTx( claimed_tx3a, privkey );
-                var fully_signed_tx3a_tx = withdrawFromChannelViaTx1a( fully_signed_tx3a, [ JSON.parse( sessionStorage[ "channel_info" ] )[ "pubkey" ], JSON.parse( sessionStorage[ "channel_info" ] )[ "theirpubkey" ] ] );
-                var openers_segwit_address = JSON.parse( sessionStorage[ "channel_info" ] )[ "my_segwit_address" ];
-                var openee_revhash = message[ "content" ][ "openee_revhash" ];
-                var openee_fidelity_bond_address = fidelityBond( openee_revhash, openerkey, openeekey );
-                var real_tx3b = prepareTx1b( txid, txindex, channel_amount, [ openerkey, openeekey ], openers_segwit_address, privkey, revhash, openeekey, openerkey, true, openee_fidelity_bond_address, htlc_amount, false, false );
-                var claimed_tx3b = message[ "content" ][ "unsigned_tx3b" ];
-                var real_tx3b_txid = getIdFromPSBT( real_tx3b );
-                var claimed_tx3b_txid = getIdFromPSBT( claimed_tx3b );
-                if ( claimed_tx3b_txid != real_tx3b_txid ) {
-                    console.log( "aborting because the replacement transaction's txid didn't match what I expected" );
-                    return;
-                }
-                var partially_signed_tx3b = cosignTx( claimed_tx3b, privkey );
-                var reply = {}
-                reply[ "type" ] = "signed tx3b";
-                var content = {}
-                content[ "partially_signed_tx3b" ] = partially_signed_tx3b;
-                content[ "revocation_key_for_tx2a" ] = JSON.parse( sessionStorage[ "channel_info" ] )[ "state_two" ][ "revpreimage" ];
-                reply[ "content" ] = content;
-                var channel_info = JSON.parse( sessionStorage[ "channel_info" ] );
-                channel_info[ "openee_balance" ] = channel_info[ "pending_balance" ];
-                channel_info[ "pending_balance" ] = 0;
-                channel_info[ "state_three" ] = {};
-                channel_info[ "state_three" ][ "tx2b_htlc_revhash" ] = channel_info[ "state_two" ][ "htlcrevhash" ];
-                channel_info[ "state_three" ][ "fully_signed_tx1a" ] = fully_signed_tx3a;
-                channel_info[ "state_three" ][ "fully_signed_tx1a_tx" ] = fully_signed_tx3a_tx;
-                channel_info[ "state_one" ] = channel_info[ "state_three" ];
-                channel_info[ "state_two" ] = {}
-                channel_info[ "state_three" ] = {}
-                sessionStorage[ "channel_info" ] = JSON.stringify( channel_info );
-                sendDM( JSON.stringify( reply ), counterparty );
-                sessionStorage[ "when_i_started_waiting_for_revocation" ] = Math.floor( Date.now() / 1000 );
-            }
-            if ( message[ "type" ] == "signed tx3b" ) {
-                var now = Math.floor( Date.now() / 1000 );
-                var earlier = Number( sessionStorage[ "when_i_started_waiting_for_cosignature_on_replacement_tx" ] );
-                sessionStorage.removeItem( "when_i_started_waiting_for_cosignature_on_replacement_tx" );
-                if ( now > earlier + 30 ) {
-                    console.log( "aborting because I waited longer than thirty seconds for a signature" );
-                    var alert = {}
-                    alert[ "type" ] = "abort";
-                    alert[ "content" ] = "aborted because you took too long to send me the signature";
-                    sendDM( JSON.stringify( alert ), counterparty );
-                    return;
-                }
-                var claimed_revpreimage = message[ "content" ][ "revocation_key_for_tx2a" ];
-                var claimed_revhash = bitcoinjs.crypto.hash160( buffer.Buffer.from( claimed_revpreimage, "hex" ) ).toString( "hex" );
-                var real_revhash = JSON.parse( sessionStorage[ "channel_info" ] )[ "state_two" ][ "revhash" ];
-                if ( claimed_revhash != real_revhash ) {
-                    console.log( "aborting because the channel opener sent me the wrong revocation preimage" );
-                    return;
-                }
-                console.log( "yay, the old state is revoked" );
-                var real_tx3b = JSON.parse( sessionStorage[ "channel_info" ] )[ "state_three" ][ "unsigned_tx3b" ];
-                var claimed_tx3b = message[ "content" ][ "partially_signed_tx3b" ];
-                var real_tx3b_txid = getIdFromPSBT( real_tx3b );
-                var claimed_tx3b_txid = getIdFromPSBT( claimed_tx3b );
-                if ( claimed_tx3b_txid != real_tx3b_txid ) {
-                    console.log( "aborting because the replacement transaction's txid didn't match what I expected" );
-                    pushBTCpmt( JSON.parse( sessionStorage[ "channel_info" ] )[ "state_two" ][ "fully_signed_tx2b_tx" ] );
-                    return;
-                }
-                var privkey = JSON.parse( sessionStorage[ "channel_info" ] )[ "privkey" ];
-                var fully_signed_tx3b = cosignTx( claimed_tx3b, privkey );
-                var fully_signed_tx3b_tx = withdrawFromChannelViaTx1a( fully_signed_tx3b, [ JSON.parse( sessionStorage[ "channel_info" ] )[ "theirpubkey" ], JSON.parse( sessionStorage[ "channel_info" ] )[ "pubkey" ] ] );
-                var reply = {}
-                reply[ "type" ] = "revoked tx2b";
-                var content = {}
-                content[ "revocation_key_for_tx2b" ] = JSON.parse( sessionStorage[ "channel_info" ] )[ "state_two" ][ "htlc_revocation_preimage" ];
-                reply[ "content" ] = content;
-                var channel_info = JSON.parse( sessionStorage[ "channel_info" ] );
-                channel_info[ "openee_balance" ] = channel_info[ "pending_balance" ];
-                channel_info[ "pending_balance" ] = 0;
-                channel_info[ "state_three" ][ "fully_signed_tx1b" ] = fully_signed_tx3b;
-                channel_info[ "state_three" ][ "fully_signed_tx1b_tx" ] = fully_signed_tx3b_tx;
-                channel_info[ "state_one" ] = channel_info[ "state_three" ];
-                channel_info[ "state_two" ] = {}
-                channel_info[ "state_three" ] = {}
-                sessionStorage[ "channel_info" ] = JSON.stringify( channel_info );
-                sendDM( JSON.stringify( reply ), counterparty );
-            }
-            if ( message[ "type" ] == "revoked tx2b" ) {
-                var now = Math.floor( Date.now() / 1000 );
-                var earlier = Number( sessionStorage[ "when_i_started_waiting_for_revocation" ] );
-                sessionStorage.removeItem( "when_i_started_waiting_for_revocation" );
-                if ( now > earlier + 30 ) {
-                    console.log( "aborting because I waited longer than thirty seconds for a revocation" );
-                    var alert = {}
-                    alert[ "type" ] = "abort";
-                    alert[ "content" ] = "aborted because you took too long to send me the revocation";
-                    sendDM( JSON.stringify( alert ), counterparty );
-                    pushBTCpmt( JSON.parse( sessionStorage[ "channel_info" ] )[ "state_one" ][ "fully_signed_tx1a_tx" ] );
-                    return;
-                }
-                var claimed_htlc_preimage = message[ "content" ][ "revocation_key_for_tx2b" ];
-                var claimed_htlc_revhash = bitcoinjs.crypto.hash160( buffer.Buffer.from( claimed_htlc_preimage, "hex" ) ).toString( "hex" );
-                var real_htlc_revhash = JSON.parse( sessionStorage[ "channel_info" ] )[ "state_one" ][ "tx2b_htlc_revhash" ];
-                if ( claimed_revhash != real_revhash ) {
-                    console.log( "aborting because the channel opener sent me the wrong revocation preimage" );
-                    pushBTCpmt( JSON.parse( sessionStorage[ "channel_info" ] )[ "state_one" ][ "fully_signed_tx1a_tx" ] );
-                    return;
-                }
-                console.log( "yay, everything is done!" );
-            }
-        }
-    </script>
-    <script>
-        function make2of2MultisigOutputScript( firstpubkey, secondpubkey ) {
-            var p2ms = bitcoinjs.payments.p2ms( {
-                m: 2, pubkeys: [
-                    buffer.Buffer.from( firstpubkey, 'hex' ),
-                    buffer.Buffer.from( secondpubkey, 'hex' ),
-                ], network: bitcoinjs.networks.regtest} );
-            return p2ms;
-        }
-        function make2of2MultisigAddress( output_script ) {
-            return bitcoinjs.payments.p2wsh( {redeem: output_script, network: bitcoinjs.networks.regtest} ).address;
-        }
-    </script>
-    <script>
-        function getTxidAndTxindexOfFundingTx( txid_of_input, txindex_of_input, amount, multisig_address, pubkey ) {
-            var psbt = new bitcoinjs.Psbt({network: bitcoinjs.networks.regtest});
-            psbt.addInput({
-                hash: txid_of_input,
-                index: txindex_of_input,
-                witnessUtxo: {
-                     script: buffer.Buffer.from( '0014' + bitcoinjs.crypto.ripemd160( bitcoinjs.crypto.sha256( buffer.Buffer.from( pubkey, "hex" ) ) ).toString( 'hex' ), 'hex' ),
-                    value: amount,
-                }
-            });
-            psbt.addOutput({
-                address: multisig_address,
-                value: amount,
-            });
-            var txinfo = [];
-            txinfo.push( getIdFromPSBT( psbt.toHex() ) );
-            txinfo.push( 0 );
-            return txinfo;
-        }
-    </script>
-    <script>
-        function signFundingTx( txid_of_input, txindex_of_input, amount, multisig_address, privkey, pubkey ) {
-            var original_quantity_of_sats = amount + 500;
-            var total_fee = 500;
-            var new_quantity_of_sats = original_quantity_of_sats - total_fee;
-            var psbt = new bitcoinjs.Psbt({network: bitcoinjs.networks.regtest});
-            psbt.addInput({
-                hash: txid_of_input,
-                index: txindex_of_input,
-                witnessUtxo: {
-                     script: buffer.Buffer.from( '0014' + bitcoinjs.crypto.ripemd160( bitcoinjs.crypto.sha256( buffer.Buffer.from( pubkey, "hex" ) ) ).toString( 'hex' ), 'hex' ),
-                    value: original_quantity_of_sats,
-                },
-            });
-            psbt.addOutput({
-                address: multisig_address,
-                value: new_quantity_of_sats,
-            });
-            var txinfo = [];
-            txinfo.push( getIdFromPSBT( psbt.toHex() ) );
-            txinfo.push( 0 );
-            psbt.signInput( 0, bitcoinjs.ECPair.fromPrivateKey( buffer.Buffer.from( privkey, "hex" ) ) );
-            psbt.validateSignaturesOfInput( 0 );
-            psbt.finalizeAllInputs();
-            return psbt.extractTransaction().toHex();
-        }
-    </script>
-    <script>
-        function getIdFromPSBT( psbthex ) {
-            var psbt = bitcoinjs.Psbt.fromHex( psbthex, {network: bitcoinjs.networks.regtest} );
-            return bitcoinjs.Transaction.fromHex( psbt.data.getTransaction().toString( "hex" ) ).getId();
-        }
-    </script>
-    <script>
-        function generateRevocableFidelityBondScript( revhash, openeekey, openerkey ) {
-            var script = bitcoinjs.script.fromASM(
-                makeRevocableFidelityBondScript( revhash, openeekey, openerkey )
-                .trim()
-                .replace(/\s+/g, ' '),
-            );
-            return script;
-        }
-        function makeRevocableFidelityBondScript( revhash, openeekey, openerkey ) {
-            var scr = `
-                OP_IF
-                    OP_HASH160
-                    ${ revhash }
-                    OP_EQUALVERIFY
-                    ${ openeekey }
-                OP_ELSE
-                    ${ bitcoinjs.script.number.encode( 1008 ).toString( 'hex' ) }
-                    OP_CHECKSEQUENCEVERIFY
-                    OP_DROP
-                    ${ openerkey }
-                OP_ENDIF
-                OP_CHECKSIG
-          `.replace( '\n', '' ).replace( / /g, '' );
-            return scr;
-        }
-        function fidelityBond( revhash, openeekey, openerkey ) {
-            var p2wsh = bitcoinjs.payments.p2wsh({redeem: {output: generateRevocableFidelityBondScript( revhash, openeekey, openerkey ), network: bitcoinjs.networks.regtest}, network: bitcoinjs.networks.regtest });
-            return p2wsh.address;
-        }
-    </script>
-    <script>
-        function getNativeSegwitAddressFromPubkeyHex( pubkeyhex ) {
-            return bitcoinjs.payments.p2wpkh({ pubkey: buffer.Buffer.from( pubkeyhex, "hex" ), network: bitcoinjs.networks.regtest }).address;
-        }
-    </script>
-    <script>
-        function prepareTx1a( txid, txindex, amount, pubkeys, fidelity_bond_address, privkey, revhash, openeekey, openerkey, segwit_address, segwit_amount, htlc_address, htlc_amount ) {
-            var original_quantity_of_sats = amount;
-            var total_fee = 500;
-            var new_quantity_of_sats = amount - total_fee;
-            if ( segwit_address && segwit_amount ) {
-                new_quantity_of_sats = new_quantity_of_sats - segwit_amount;
-            }
-            if ( htlc_address && htlc_amount ) {
-                new_quantity_of_sats = new_quantity_of_sats - htlc_amount;
-            }
-            var p2ms = make2of2MultisigOutputScript( pubkeys[ 0 ], pubkeys[ 1 ] );
-            var p2wsh = bitcoinjs.payments.p2wsh( {redeem: p2ms, network: bitcoinjs.networks.regtest} );
-
-            var psbt = new bitcoinjs.Psbt({network: bitcoinjs.networks.regtest});
-            psbt.addInput({
-                hash: txid,
-                index: txindex,
-                witnessScript: p2wsh.redeem.output,
-                witnessUtxo: {
-                    script: buffer.Buffer.from( '0020' + bitcoinjs.crypto.sha256( buffer.Buffer.from( p2ms.output, 'hex' ) ).toString( 'hex' ), 'hex' ),
-                    value: original_quantity_of_sats
-                },
-            });
-            psbt.addOutput({
-                address: fidelity_bond_address,
-                value: new_quantity_of_sats,
-            });
-            if ( segwit_address && segwit_amount ) {
-                psbt.addOutput({
-                    address: segwit_address,
-                    value: segwit_amount,
+        </style>
+        <script>
+            var $ = document.querySelector.bind( document );
+            var $$ = document.querySelectorAll.bind( document );
+            var url_params = new URLSearchParams( window.location.search );
+            var url_keys = url_params.keys();
+            var $_GET = {}
+            for ( var key of url_keys ) $_GET[ key ] = url_params.get( key );
+        </script>
+        <script>
+            var changeState = async () => {
+                var pauls_new_publication_preimage = bytesToHex( nobleSecp256k1.utils.randomPrivateKey() ).substring( 0, 32 );
+                var pauls_new_publication_hash = rmd160( hexToBytes( pauls_new_publication_preimage ) );
+                var pauls_new_revocation_preimage = bytesToHex( nobleSecp256k1.utils.randomPrivateKey() ).substring( 0, 32 );
+                var pauls_new_revocation_hash = rmd160( hexToBytes( pauls_new_revocation_preimage ) );
+                var vickys_data = prompt( `enter Vicky's new pub & rev hashes & amount` );
+                vickys_data = JSON.parse( vickys_data );
+                var vickys_new_publication_hash = vickys_data[ 0 ];
+                var vickys_new_revocation_hash = vickys_data[ 1 ];
+                var amount_for_paul = vickys_data[ 2 ];
+                if ( amount_for_paul > paul_db[ "tx_funding_amt" ] + 500 ) return;
+                //don't send money to Vicky if you don't have a sufficient reserve built up yet
+                if ( amount_for_paul <= paul_db[ "balance" ][ "reserve" ] ) return;
+                var amount_paul_currently_has = paul_db[ "balance" ][ "local" ] + paul_db[ "balance" ][ "reserve" ];
+                var amount_paul_will_get = amount_for_paul - amount_paul_currently_has;
+                if ( amount_paul_will_get == 0 ) return;
+                if ( amount_paul_will_get > 0 ) var msg = `Do you want Vicky to send you ${amount_paul_will_get} sats?`;
+                else var msg = `Do you want to send Vicky ${Math.abs( amount_paul_will_get )} sats?`;
+                var conf = confirm( msg );
+                if ( !conf ) return;
+                var vickys_key = paul_db[ "vickys_key" ];
+                var new_post_funding_script_paul = [
+                    'OP_RIPEMD160',
+                    pauls_new_publication_hash,
+                    'OP_EQUAL',
+                    'OP_IF',
+                        2,
+                        pauls_key,
+                        vickys_key,
+                        2,
+                        'OP_CHECKMULTISIG',
+                    'OP_ELSE',
+                        'OP_10',
+                        'OP_CHECKSEQUENCEVERIFY',
+                        'OP_DROP',
+                        vickys_key,
+                        'OP_CHECKSIG',
+                    'OP_ENDIF',
+                ];
+                // var tx_funding_script = [ 2, pauls_key, vickys_key, 2, 'OP_CHECKMULTISIG' ];
+                var new_post_funding_address_paul = tapscript.Address.p2wsh.fromScript( new_post_funding_script_paul, "regtest" );
+                var new_post_funding_script_vicky = [
+                    'OP_RIPEMD160',
+                    vickys_new_publication_hash,
+                    'OP_EQUAL',
+                    'OP_IF',
+                        2,
+                        pauls_key,
+                        vickys_key,
+                        2,
+                        'OP_CHECKMULTISIG',
+                    'OP_ELSE',
+                        'OP_10',
+                        'OP_CHECKSEQUENCEVERIFY',
+                        'OP_DROP',
+                        pauls_key,
+                        'OP_CHECKSIG',
+                    'OP_ENDIF',
+                ];
+                // var tx_funding_script = [ 2, pauls_key, vickys_key, 2, 'OP_CHECKMULTISIG' ];
+                var new_post_funding_address_vicky = tapscript.Address.p2wsh.fromScript( new_post_funding_script_vicky, "regtest" );
+                var new_tx_commit_scripts = [
+                    [ 'OP_RIPEMD160', vickys_new_publication_hash, 'OP_EQUALVERIFY', 'OP_RIPEMD160', vickys_new_revocation_hash, 'OP_EQUALVERIFY', pauls_key.substring( 2 ), 'OP_CHECKSIG' ],
+                    [ 0, pauls_key.substring( 2 ), 'OP_CHECKSIGADD', vickys_key.substring( 2 ), 'OP_CHECKSIGADD', 2, 'OP_EQUALVERIFY', 1 * 7, 'OP_CHECKSEQUENCEVERIFY', 'OP_0NOTEQUAL' ],
+                    [ 'OP_RIPEMD160', pauls_new_publication_hash, 'OP_EQUALVERIFY', 'OP_RIPEMD160', pauls_new_revocation_hash, 'OP_EQUALVERIFY', vickys_key.substring( 2 ), 'OP_CHECKSIG' ],
+                ];
+                console.log( "new_tx_commit_scripts:" );
+                console.log( JSON.stringify( new_tx_commit_scripts ) );
+                var new_tx_commit_tree = new_tx_commit_scripts.map( s => tapscript.Tap.encodeScript( s ) );
+                var [ new_tx_commit_tpubkey, cblock ] = tapscript.Tap.getPubKey( "ab".repeat( 32 ), { tree: new_tx_commit_tree, target: tapscript.Tap.encodeScript( new_tx_commit_scripts[ 1 ] ) });
+                var new_tx_commit_cblock = cblock;
+                var new_tx_commit_address = tapscript.Address.p2tr.fromPubKey( new_tx_commit_tpubkey, 'regtest' );
+                console.log( "new_tx_commit_address:", new_tx_commit_address );
+                var prev_tx_funding = tapscript.Tx.decode( paul_db[ "force_close_txs" ][ "to_reveal" ] );
+                var tx_funding_txid = prev_tx_funding[ "vin" ][ 0 ][ "txid" ];
+                var tx_funding_vout = prev_tx_funding[ "vin" ][ 0 ][ "vout" ];
+                var tx_funding_amt = paul_db[ "tx_funding_amt" ];
+                var tx_funding_address = paul_db[ "tx_funding_address" ];
+                var tx_funding_script = paul_db[ "tx_funding_script" ];
+                var new_tx_funding_txdata = tapscript.Tx.create({
+                  vin  : [{
+                    txid: tx_funding_txid,
+                    vout: tx_funding_vout,
+                    prevout: {
+                      value: tx_funding_amt,
+                      scriptPubKey: tapscript.Address.toScriptPubKey( tx_funding_address )
+                    },
+                  }],
+                  vout : [{
+                    value: tx_funding_amt - 500,
+                    scriptPubKey: tapscript.Address.toScriptPubKey( new_post_funding_address_paul )
+                  }]
                 });
-            }
-            if ( htlc_address && htlc_amount ) {
-                psbt.addOutput({
-                    address: htlc_address,
-                    value: htlc_amount,
+                console.log( "new_tx_funding_txdata:" );
+                console.log( JSON.stringify( new_tx_funding_txdata ) );
+                var new_tx_funding_pauls_sig = tapscript.Signer.segwit.sign( privkey, new_tx_funding_txdata, 0, { script: tx_funding_script });
+                var new_tx_funding_txhex = tapscript.Tx.encode( new_tx_funding_txdata ).hex;
+                console.log( "unsigned new_tx_funding_txhex:", new_tx_funding_txhex );
+                var new_post_funding_txid = tapscript.Tx.util.getTxid( new_tx_funding_txhex );
+                console.log( "new_post_funding_txid:", new_post_funding_txid );
+                var new_post_funding_vout = 0;
+                var new_post_funding_amt = tx_funding_amt - 500;
+                var new_post_funding_txdata = tapscript.Tx.create({
+                  vin  : [{
+                    txid: new_post_funding_txid,
+                    vout: new_post_funding_vout,
+                    prevout: {
+                      value: new_post_funding_amt,
+                      scriptPubKey: tapscript.Address.toScriptPubKey( new_post_funding_address_paul )
+                    },
+                  }],
+                  vout : [{
+                    value: new_post_funding_amt - 500,
+                    scriptPubKey: tapscript.Address.toScriptPubKey( new_tx_commit_address )
+                  }]
                 });
-            }
-            psbt.signInput( 0, bitcoinjs.ECPair.fromPrivateKey( buffer.Buffer.from( privkey, "hex" ) ) );
-            return psbt.toHex();
-        }
-    </script>
-    <script>
-        function cosignTx( psbthex, privkey ) {
-            var psbt = bitcoinjs.Psbt.fromHex( psbthex, {network: bitcoinjs.networks.regtest} );
-            psbt.signInput( 0, bitcoinjs.ECPair.fromPrivateKey( buffer.Buffer.from( privkey, "hex" ) ) );
-            return psbt.toHex();
-        }
-    </script>
-    <script>
-        function withdrawFromChannelViaTx1a( psbthex, pubkeys ) {
-            var psbt = bitcoinjs.Psbt.fromHex( psbthex, {network: bitcoinjs.networks.regtest} );
-            var getFinalScripts = ( txindex, input, script) => {
-                //Step 1: Check to make sure the meaningful locking script matches what you expect.
-                var decompiled = bitcoinjs.script.decompile( script )
-                if ( !decompiled ) {
-                    throw new Error( `Can not finalize input #${txindex}` )
-                }
-
-                //Step 2: Create final scripts
-                var stack_elements = [];
-                //add a dummy value because we are using multisig which pops one extra item off the stack – in segwit the dummy value must be zero i.e. null value i.e. empty string
-                stack_elements.push( '' );
-                var sig_order = [];
-                pubkeys.forEach( function( key ) {
-                    var i; for ( i=0; i<input.partialSig.length; i++ ) {
-                        if ( key == buffer.Buffer.from( input.partialSig[ i ].pubkey ).toString( "hex" ) ) {
-                            sig_order.push( i );
-                        }
-                    }
+                var sighash = tapscript.Signer.segwit.hash( new_post_funding_txdata, 0, { script: new_post_funding_script_paul } );
+                var new_post_funding_pauls_sig = tapscript.Signer.segwit.sign( privkey, new_post_funding_txdata, 0, { script: new_post_funding_script_paul });
+                var new_post_funding_txhex = tapscript.Tx.encode( new_post_funding_txdata ).hex;
+                var new_tx_commit_txid = tapscript.Tx.util.getTxid( new_post_funding_txhex );
+                console.log( "new_tx_commit_txid:", new_tx_commit_txid );
+                var new_tx_commit_vout = 0;
+                var new_tx_commit_amt = new_post_funding_amt - 500;
+                //todo: get this address from elsewhere
+                var pauls_address = 'bcrt1q738hdjlatdx9xmg3679kwq9cwd7fa2c84my9zk';
+                paul_db[ "pauls_address" ] = pauls_address;
+                var vickys_address = paul_db[ "vickys_address" ];
+                var new_tx_commit_txdata = tapscript.Tx.create({
+                  vin  : [{
+                    txid: new_tx_commit_txid,
+                    vout: new_tx_commit_vout,
+                    //todo: fix this sequence
+                    // sequence: 144 * 7,
+                    sequence: 1 * 7,
+                    prevout: {
+                      value: new_tx_commit_amt,
+                      scriptPubKey: tapscript.Address.toScriptPubKey( new_tx_commit_address )
+                    },
+                  }],
+                  vout : [{
+                    value: new_tx_commit_amt - amount_for_paul - 500,
+                    scriptPubKey: tapscript.Address.toScriptPubKey( vickys_address )
+                  },{
+                    value: amount_for_paul,
+                    scriptPubKey: tapscript.Address.toScriptPubKey( pauls_address )
+                  }]
                 });
-                sig_order.forEach( function( item ) {
-                    stack_elements.push( input.partialSig[ item ].signature );
+                var vickys_amt = new_tx_commit_amt - amount_for_paul - 500;
+                var new_tx_commit_pauls_sig = tapscript.Signer.taproot.sign( privkey, new_tx_commit_txdata, 0, { extension: tapscript.Tap.encodeScript( new_tx_commit_scripts[ 1 ] ) });
+                console.log( `new pub & rev hashes & btc address: ${JSON.stringify( [pauls_new_publication_hash, pauls_new_revocation_hash, pauls_address] )}` );
+                alert( `Give Vicky the data in your console` );
+                var vickys_data = prompt( `enter Vicky's three new signatures` );
+                vickys_data = JSON.parse( vickys_data );
+                //the following sig should move the money from the funding address to the new_post_funding address
+                var new_tx_funding_vickys_sig = vickys_data[ 0 ];
+                var sighash = tapscript.Signer.segwit.hash( new_tx_funding_txdata, 0, { script: tx_funding_script } );
+                var sigflag = new_tx_funding_vickys_sig.substring( new_tx_funding_vickys_sig.length - 2 );
+                if ( sigflag != "01" ) return alert( "new_tx_funding sig was not good due to bad sigflag! Aborting" );
+                var sig_is_good = await nobleSecp256k1.verify( new_tx_funding_vickys_sig.substring( 0, new_tx_funding_vickys_sig.length - 2 ), bytesToHex( sighash ), vickys_key );
+                if ( !sig_is_good ) return alert( "new_tx_funding sig was not good due to not validating! Aborting" );
+                new_tx_funding_txdata.vin[ 0 ].witness = [ 0, new_tx_funding_pauls_sig, new_tx_funding_vickys_sig, tx_funding_script ];
+                var new_tx_funding_txhex = tapscript.Tx.encode( new_tx_funding_txdata ).hex;
+                //the following sig should move the money from the new_post_funding address to the new_tx_commit address
+                var new_post_funding_vickys_sig = vickys_data[ 1 ];
+                var sighash = tapscript.Signer.segwit.hash( new_post_funding_txdata, 0, { script: new_post_funding_script_paul } );
+                var sigflag = new_post_funding_vickys_sig.substring( new_post_funding_vickys_sig.length - 2 );
+                if ( sigflag != "01" ) return alert( "new_post_funding sig was not good! Aborting" );
+                var sig_is_good = await nobleSecp256k1.verify( new_post_funding_vickys_sig.substring( 0, new_post_funding_vickys_sig.length - 2 ), bytesToHex( sighash ), vickys_key );
+                if ( !sig_is_good ) return alert( "new_post_funding sig was not good! Aborting" );
+                new_post_funding_txdata.vin[ 0 ].witness = [ 0, new_tx_funding_pauls_sig, new_tx_funding_vickys_sig, pauls_new_publication_preimage, tx_funding_script ];
+                var new_post_funding_txhex = tapscript.Tx.encode( new_post_funding_txdata ).hex;
+                //the following sig should move the money from the new_tx_commit address to vicky
+                var new_tx_commit_vickys_sig = vickys_data[ 2 ];
+                var sighash = tapscript.Signer.taproot.hash( new_tx_commit_txdata, 0, { extension: tapscript.Tap.encodeScript( new_tx_commit_scripts[ 1 ] ) } );
+                if ( new_tx_commit_vickys_sig.length > 128 ) return alert( "new_tx_commit sig was not good! Aborting" );
+                var sig_is_good = await nobleSecp256k1.schnorr.verify( new_tx_commit_pauls_sig, bytesToHex( sighash ), pauls_key.substring( 2 ) );
+                if ( !sig_is_good ) return alert( "new_tx_commit sig was not good! Aborting" );
+                new_tx_commit_txdata.vin[ 0 ].witness = [ new_tx_commit_vickys_sig, new_tx_commit_pauls_sig, new_tx_commit_scripts[ 1 ], new_tx_commit_cblock ];
+                var new_tx_commit_txhex = tapscript.Tx.encode( new_tx_commit_txdata ).hex;
+                if ( !( "old_states" in paul_db ) ) paul_db[ "old_states" ] = [];
+                var old_state = paul_db[ "force_close_txs" ];
+                paul_db[ "old_states" ].push( old_state );
+                //todo: fix the problem whereby Paul or Vicky can lock up the money forever by
+                //using a "to_reveal" transaction in an old state to move the money to a reveal
+                //address but then never actually reveal anything -- the victim cannot take the
+                //money without revealing their publication key for an old state, allowing the
+                //attacker to steal it, because the attacker would then have the victim's
+                //publication key AND their revocation key
+                //I think I can fix this by making the to_reveal address (aka the post-funding
+                //address) different for both parties. For Paul, it should require him to reveal
+                //his publication key, otherwise Vicky can take the money after 10 blocks. For
+                //Vicky, it should require her to reveal her publication key, otherwise Paul can
+                //take the money after 10 blocks. Vicky should sign a tx sending the money to the
+                //version where Paul reveals, and send that sig to Paul, as well as a sig moving
+                //the money "from" that address to the refund address. Similarly, Paul should
+                //sign a tx sending the money to the version where Vicky reveals, and send that
+                //sig to Vicky, as well as a sig moving the money "from" that address to the
+                //refund address. Both parties should validate the other party's sigs, cosign
+                //them, add the sigs to their witness stacks along with their publication keys,
+                //and put the resulting finalized tx in the force_close_txs part of their db.
+                //Their mempool checker function should *not only* check for the txid of an old
+                //tx that moves the money to the delay address (whereupon it should get their
+                //counterparty's publication key and use it to sweep their funds, justice style)
+                //but it should also check for the txid f an old tx that moves the money to the
+                //reveal address, where, if it stays there for 10 blocks, they should sweep it
+                var new_state = {
+                    to_reveal: new_tx_funding_txhex,
+                    to_delay: new_post_funding_txhex,
+                    final_tx: new_tx_commit_txhex,
+                    vickys_publication_hash: vickys_new_publication_hash,
+                    vickys_revocation_hash: vickys_new_revocation_hash,
+                    pauls_publication_preimage: pauls_new_publication_preimage,
+                    pauls_revocation_preimage: pauls_new_revocation_preimage,
+                }
+                paul_db[ "force_close_txs" ] = new_state;
+                if ( !( "balance" in paul_db ) ) paul_db[ "balance" ] = {}
+                var reserve_amount_before_update = paul_db[ "balance" ][ "reserve" ];
+                paul_db[ "balance" ][ "reserve" ] = amount_for_paul > 2000 ? 2000 : amount_for_paul;
+                var reserve_amount_after_update = paul_db[ "balance" ][ "reserve" ];
+                var amount_added_to_reserve = reserve_amount_after_update - reserve_amount_before_update;
+                paul_db[ "balance" ][ "local" ] = amount_for_paul > 2000 ? amount_for_paul - 2000 : amount_for_paul;
+                paul_db[ "balance" ][ "remote" ] = paul_db[ "tx_funding_amt" ] + 500 - ( paul_db[ "balance" ][ "reserve" ] + paul_db[ "balance" ][ "local" ] );
+                //versions for vicky
+                var new_tx_funding_txdata = tapscript.Tx.create({
+                  vin  : [{
+                    txid: tx_funding_txid,
+                    vout: tx_funding_vout,
+                    prevout: {
+                      value: tx_funding_amt,
+                      scriptPubKey: tapscript.Address.toScriptPubKey( tx_funding_address )
+                    },
+                  }],
+                  vout : [{
+                    value: tx_funding_amt - 500,
+                    scriptPubKey: tapscript.Address.toScriptPubKey( new_post_funding_address_vicky )
+                  }]
                 });
-                var witnessStack = bitcoinjs.payments.p2wsh({
-                    redeem: {
-                        output: script,
-                        input: bitcoinjs.script.compile( stack_elements ),
-                    }
+                // console.log( "new_tx_funding_txdata:" );
+                // console.log( JSON.stringify( new_tx_funding_txdata ) );
+                var new_tx_funding_pauls_sig_vicky = tapscript.Signer.segwit.sign( privkey, new_tx_funding_txdata, 0, { script: tx_funding_script });
+                var new_tx_funding_txhex = tapscript.Tx.encode( new_tx_funding_txdata ).hex;
+                var new_post_funding_txid = tapscript.Tx.util.getTxid( new_tx_funding_txhex );
+                var new_post_funding_vout = 0;
+                var new_post_funding_amt = tx_funding_amt - 500;
+                var new_post_funding_txdata = tapscript.Tx.create({
+                  vin  : [{
+                    txid: new_post_funding_txid,
+                    vout: new_post_funding_vout,
+                    prevout: {
+                      value: new_post_funding_amt,
+                      scriptPubKey: tapscript.Address.toScriptPubKey( new_post_funding_address_vicky )
+                    },
+                  }],
+                  vout : [{
+                    value: new_post_funding_amt - 500,
+                    scriptPubKey: tapscript.Address.toScriptPubKey( new_tx_commit_address )
+                  }]
                 });
-                return {
-                    finalScriptWitness: witnessStackToScriptWitness( witnessStack.witness )
-                }
-            }
-            psbt.finalizeInput( 0, getFinalScripts );
-            return psbt.extractTransaction().toHex();
-        }
-    </script>
-    <script>
-        function prepareTx1b( txid, txindex, amount, pubkeys, segwit_address, privkey, revhash, openeekey, openerkey, i_should_sign, fidelity_bond_address, fidelity_bond_amount, htlc_address, htlc_amount ) {
-            var original_quantity_of_sats = amount;
-            var total_fee = 500;
-            var new_quantity_of_sats = amount - total_fee;
-            if ( fidelity_bond_address && fidelity_bond_amount ) {
-                new_quantity_of_sats = new_quantity_of_sats - fidelity_bond_amount;
-            }
-            if ( htlc_address && htlc_amount ) {
-                new_quantity_of_sats = new_quantity_of_sats - htlc_amount;
-            }
-            var p2ms = make2of2MultisigOutputScript( pubkeys[ 0 ], pubkeys[ 1 ] );
-            var p2wsh = bitcoinjs.payments.p2wsh( {redeem: p2ms, network: bitcoinjs.networks.regtest} );
-
-            var psbt = new bitcoinjs.Psbt({network: bitcoinjs.networks.regtest});
-            psbt.addInput({
-                hash: txid,
-                index: txindex,
-                witnessScript: p2wsh.redeem.output,
-                witnessUtxo: {
-                    script: buffer.Buffer.from( '0020' + bitcoinjs.crypto.sha256( buffer.Buffer.from( p2ms.output, 'hex' ) ).toString( 'hex' ), 'hex' ),
-                    value: original_quantity_of_sats
-                },
-            });
-            psbt.addOutput({
-                address: segwit_address,
-                value: new_quantity_of_sats,
-            });
-            if ( fidelity_bond_address && fidelity_bond_amount ) {
-                psbt.addOutput({
-                    address: fidelity_bond_address,
-                    value: fidelity_bond_amount,
+                var sighash = tapscript.Signer.segwit.hash( new_post_funding_txdata, 0, { script: new_post_funding_script_vicky } );
+                var new_post_funding_pauls_sig_vicky = tapscript.Signer.segwit.sign( privkey, new_post_funding_txdata, 0, { script: new_post_funding_script_vicky });
+                var new_post_funding_txhex = tapscript.Tx.encode( new_post_funding_txdata ).hex;
+                var new_tx_commit_txid = tapscript.Tx.util.getTxid( new_post_funding_txhex );
+                var new_tx_commit_vout = 0;
+                var new_tx_commit_amt = new_post_funding_amt - 500;
+                var vickys_address = paul_db[ "vickys_address" ];
+                var new_tx_commit_txdata = tapscript.Tx.create({
+                  vin  : [{
+                    txid: new_tx_commit_txid,
+                    vout: new_tx_commit_vout,
+                    //todo: fix this sequence
+                    // sequence: 144 * 7,
+                    sequence: 1 * 7,
+                    prevout: {
+                      value: new_tx_commit_amt,
+                      scriptPubKey: tapscript.Address.toScriptPubKey( new_tx_commit_address )
+                    },
+                  }],
+                  vout : [{
+                    value: new_tx_commit_amt - amount_for_paul - 500,
+                    scriptPubKey: tapscript.Address.toScriptPubKey( vickys_address )
+                  },{
+                    value: amount_for_paul,
+                    scriptPubKey: tapscript.Address.toScriptPubKey( pauls_address )
+                  }]
                 });
+                var new_tx_commit_pauls_sig_vicky = tapscript.Signer.taproot.sign( privkey, new_tx_commit_txdata, 0, { extension: tapscript.Tap.encodeScript( new_tx_commit_scripts[ 1 ] ) });
+                //return here
+                console.log( `give this data to Vicky: ${JSON.stringify([new_tx_funding_pauls_sig_vicky.hex, new_post_funding_pauls_sig_vicky.hex, new_tx_commit_pauls_sig_vicky.hex])}`);
+                alert( `Send the info in your console to Vicky` );
+                var vickys_revocation_preimage = prompt( `enter Vicky's revocation preimage for state ${paul_db[ "old_states" ].length - 1}` );
+                var vickys_revocation_hash = paul_db[ "old_states" ][ paul_db[ "old_states" ].length - 1 ][ "vickys_revocation_hash" ];
+                if ( rmd160( hexToBytes( vickys_revocation_preimage ) ) != vickys_revocation_hash ) return alert( "Time to force close! Vicky sent you a wrong revocation preimage!" );
+                paul_db[ "old_states" ][ paul_db[ "old_states" ].length - 1 ][ "vickys_revocation_preimage" ] = vickys_revocation_preimage;
+                console.log( `Send this revocation preimage to Vicky: ${paul_db[ "old_states" ][ paul_db[ "old_states" ].length - 1 ][ "pauls_revocation_preimage" ]}` );
+                alert( `send Vicky your revocation preimage (it is in your console)` );
             }
-            if ( htlc_address && htlc_amount ) {
-                psbt.addOutput({
-                    address: htlc_address,
-                    value: htlc_amount,
+        </script>
+    </head>
+    <body>
+        <h1>Hi Paul</h1>
+        <script>
+            var refund_cblock = null;
+            var privkey = bytesToHex( nobleSecp256k1.utils.randomPrivateKey() );
+            var pauls_key = nobleSecp256k1.getPublicKey( privkey, true );
+            var publication_privkey = bytesToHex( nobleSecp256k1.utils.randomPrivateKey() );
+            var pauls_publication_preimage = bytesToHex( nobleSecp256k1.utils.randomPrivateKey() ).substring( 0, 32 );
+            var pauls_publication_hash = rmd160( hexToBytes( pauls_publication_preimage ) );
+            var pauls_revocation_preimage = bytesToHex( nobleSecp256k1.utils.randomPrivateKey() ).substring( 0, 32 );
+            var pauls_revocation_hash = rmd160( hexToBytes( pauls_revocation_preimage ) );
+            var revocation_privkey = bytesToHex( nobleSecp256k1.utils.randomPrivateKey() );
+            console.log( "pauls_key:", pauls_key );
+            console.log( "pauls_publication_hash:", pauls_publication_hash );
+            console.log( "pauls_revocation_hash:", pauls_revocation_hash );
+            var paul_db = {}
+            var createChannel = async () => {
+                alert( `send Vicky your key, publication hash, and revocation hash (they are in your console -- if you don't see them there, refresh your page repeatedly til you do)` );
+                var data_from_vicky = prompt( `enter the info from Vicky` );
+                data_from_vicky = JSON.parse( data_from_vicky );
+                var prefunding_txid = data_from_vicky[ "prefunding_txid" ];
+                var prefunding_vout = data_from_vicky[ "prefunding_vout" ];
+                var prefunding_amt = data_from_vicky[ "prefunding_amt" ];
+                var vickys_key = data_from_vicky[ "vickys_key" ];
+                var vickys_publication_hash = data_from_vicky[ "vickys_publication_hash" ];
+                var vickys_revocation_hash = data_from_vicky[ "vickys_revocation_hash" ];
+                var vickys_address = data_from_vicky[ "vickys_address" ];
+                var prefunding_address = data_from_vicky[ "prefunding_address" ];
+                //todo: fix the sequence which should be 144 * 7 not 1 * 7
+                var refund_scripts = [
+                    [ 'OP_RIPEMD160', vickys_publication_hash, 'OP_EQUALVERIFY', 'OP_RIPEMD160', vickys_revocation_hash, 'OP_EQUALVERIFY', pauls_key.substring( 2 ), 'OP_CHECKSIG' ],
+                    [ 0, pauls_key.substring( 2 ), 'OP_CHECKSIGADD', vickys_key.substring( 2 ), 'OP_CHECKSIGADD', 2, 'OP_EQUALVERIFY', 1 * 7, 'OP_CHECKSEQUENCEVERIFY', 'OP_0NOTEQUAL' ],
+                    [ 'OP_RIPEMD160', pauls_publication_hash, 'OP_EQUALVERIFY', 'OP_RIPEMD160', pauls_revocation_hash, 'OP_EQUALVERIFY', vickys_key.substring( 2 ), 'OP_CHECKSIG' ]
+                ];
+                var refund_tree = refund_scripts.map( s => tapscript.Tap.encodeScript( s ) );
+                var [ refund_tpubkey, cblock ] = tapscript.Tap.getPubKey( "ab".repeat( 32 ), { tree: refund_tree });
+                refund_cblock = cblock;
+                var refund_address = tapscript.Address.p2tr.fromPubKey( refund_tpubkey, 'regtest' );
+                console.log( "refund_address:", refund_address );
+                var tx_funding_script = [
+                    2,
+                    pauls_key,
+                    vickys_key,
+                    2,
+                    'OP_CHECKMULTISIG'
+                ];
+                var tx_funding_address = tapscript.Address.p2wsh.fromScript( tx_funding_script, "regtest" );
+                var post_funding_script_paul = [
+                    'OP_RIPEMD160',
+                    pauls_publication_hash,
+                    'OP_EQUAL',
+                    'OP_NOTIF',
+                        'OP_10',
+                        'OP_CHECKSEQUENCEVERIFY',
+                        'OP_DROP',
+                    'OP_ENDIF',
+                    2,
+                    pauls_key,
+                    vickys_key,
+                    2,
+                    'OP_CHECKMULTISIG'
+                ];
+                // var tx_funding_script = [ 2, pauls_key, vickys_key, 2, 'OP_CHECKMULTISIG' ];
+                var post_funding_address_paul = tapscript.Address.p2wsh.fromScript( post_funding_script_paul, "regtest" );
+                var post_funding_script_vicky = [
+                    'OP_RIPEMD160',
+                    vickys_publication_hash,
+                    'OP_EQUAL',
+                    'OP_IF',
+                        2,
+                        pauls_key,
+                        vickys_key,
+                        2,
+                        'OP_CHECKMULTISIG',
+                    'OP_ELSE',
+                        'OP_10',
+                        'OP_CHECKSEQUENCEVERIFY',
+                        'OP_DROP',
+                        pauls_key,
+                        'OP_CHECKSIG',
+                    'OP_ENDIF',
+                ];
+                // var tx_funding_script = [ 2, pauls_key, vickys_key, 2, 'OP_CHECKMULTISIG' ];
+                var post_funding_address_vicky = tapscript.Address.p2wsh.fromScript( post_funding_script_vicky, "regtest" );
+                var prefunding_txdata = tapscript.Tx.create({
+                  vin  : [{
+                    txid: prefunding_txid,
+                    vout: prefunding_vout,
+                    prevout: {
+                      value: prefunding_amt,
+                      scriptPubKey: tapscript.Address.toScriptPubKey( prefunding_address )
+                    },
+                  }],
+                  vout : [{
+                    value: prefunding_amt - 500,
+                    scriptPubKey: tapscript.Address.toScriptPubKey( tx_funding_address )
+                  }]
                 });
-            }
-            if ( i_should_sign ) {
-                psbt.signInput( 0, bitcoinjs.ECPair.fromPrivateKey( buffer.Buffer.from( privkey, "hex" ) ) );
-            }
-            return psbt.toHex();
-        }
-    </script>
-    <script>
-        function withdrawFromChannelViaTx1b( psbthex, pubkeys ) {
-            var psbt = bitcoinjs.Psbt.fromHex( psbthex, {network: bitcoinjs.networks.regtest} );
-            var getFinalScripts = ( txindex, input, script) => {
-                //Step 1: Check to make sure the meaningful locking script matches what you expect.
-                var decompiled = bitcoinjs.script.decompile( script )
-                if ( !decompiled ) {
-                    throw new Error( `Can not finalize input #${txindex}` )
-                }
-
-                //Step 2: Create final scripts
-                var stack_elements = [];
-                //add a dummy value because we are using multisig which pops one extra item off the stack – in segwit the dummy value must be zero i.e. null value i.e. empty string
-                stack_elements.push( '' );
-                var sig_order = [];
-                pubkeys.forEach( function( key ) {
-                    var i; for ( i=0; i<input.partialSig.length; i++ ) {
-                        if ( key == buffer.Buffer.from( input.partialSig[ i ].pubkey ).toString( "hex" ) ) {
-                            sig_order.push( i );
-                        }
-                    }
+                var prefunding_txhex = tapscript.Tx.encode( prefunding_txdata ).hex;
+                console.log( "prefunding_txhex:", prefunding_txhex );
+                var tx_funding_txid = tapscript.Tx.util.getTxid( prefunding_txhex );
+                var tx_funding_vout = 0;
+                var tx_funding_amt = prefunding_amt - 500;
+                var tx_funding_txdata_paul = tapscript.Tx.create({
+                  vin  : [{
+                    txid: tx_funding_txid,
+                    vout: tx_funding_vout,
+                    prevout: {
+                      value: tx_funding_amt,
+                      scriptPubKey: tapscript.Address.toScriptPubKey( tx_funding_address )
+                    },
+                  }],
+                  vout : [{
+                    value: tx_funding_amt - 500,
+                    scriptPubKey: tapscript.Address.toScriptPubKey( post_funding_address_paul )
+                  }]
                 });
-                sig_order.forEach( function( item ) {
-                    stack_elements.push( input.partialSig[ item ].signature );
+                var sighash = tapscript.Signer.segwit.hash( tx_funding_txdata_paul, 0, { script: tx_funding_script } );
+                // console.log( "tx_funding_txdata_paul:" );
+                // console.log( JSON.stringify( tx_funding_txdata_paul ) );
+                // console.log( "its sighash:", sighash.hex );
+                var tx_funding_pauls_sig = tapscript.Signer.segwit.sign( privkey, tx_funding_txdata_paul, 0, { script: tx_funding_script });
+                tx_funding_txdata_paul.vin[ 0 ].witness = [ 0, 0, tx_funding_pauls_sig, tx_funding_script ];
+                var tx_funding_txhex_paul = tapscript.Tx.encode( tx_funding_txdata_paul ).hex;
+                // console.log( "tx_funding_txhex_paul:", tx_funding_txhex_paul );
+                var post_funding_txid = tapscript.Tx.util.getTxid( tx_funding_txhex_paul );
+                // console.log( "post_funding_txid:", post_funding_txid );
+                var post_funding_vout = 0;
+                var post_funding_amt = tx_funding_amt - 500;
+                var post_funding_txdata_paul = tapscript.Tx.create({
+                  vin  : [{
+                    txid: post_funding_txid,
+                    vout: post_funding_vout,
+                    prevout: {
+                      value: post_funding_amt,
+                      scriptPubKey: tapscript.Address.toScriptPubKey( post_funding_address_paul )
+                    },
+                  }],
+                  vout : [{
+                    value: post_funding_amt - 500,
+                    scriptPubKey: tapscript.Address.toScriptPubKey( refund_address )
+                  }]
                 });
-                var witnessStack = bitcoinjs.payments.p2wsh({
-                    redeem: {
-                        output: script,
-                        input: bitcoinjs.script.compile( stack_elements ),
-                    }
+                // console.log( "post_funding_txdata_paul:" );
+                // console.log( JSON.stringify( post_funding_txdata_paul ) );
+                var post_funding_pauls_sig = tapscript.Signer.segwit.sign( privkey, post_funding_txdata_paul, 0, { script: post_funding_script_paul });
+                var post_funding_txhex_paul = tapscript.Tx.encode( post_funding_txdata_paul ).hex;
+                var tx_refund_txid = tapscript.Tx.util.getTxid( post_funding_txhex_paul );
+                // console.log( "tx_refund_txid:", tx_refund_txid );
+                var tx_refund_vout = 0;
+                var tx_refund_amt = post_funding_amt - 500;
+                var tx_refund_txdata_paul = tapscript.Tx.create({
+                  vin  : [{
+                    txid: tx_refund_txid,
+                    vout: tx_refund_vout,
+                    //todo: fix the sequence
+                    // sequence: 144 * 7,
+                    sequence: 1 * 7,
+                    prevout: {
+                      value: tx_refund_amt,
+                      scriptPubKey: tapscript.Address.toScriptPubKey( refund_address )
+                    },
+                  }],
+                  vout : [{
+                    value: tx_refund_amt - 500,
+                    scriptPubKey: tapscript.Address.toScriptPubKey( vickys_address )
+                  }]
                 });
-                return {
-                    finalScriptWitness: witnessStackToScriptWitness( witnessStack.witness )
-                }
-            }
-            psbt.finalizeInput( 0, getFinalScripts );
-            return psbt.extractTransaction().toHex();
-        }
-    </script>
-    <script>
-        function witnessStackToScriptWitness(witness) {
-          let buffer2 = buffer.Buffer.allocUnsafe(0);
-          function writeSlice(slice) {
-            buffer2 = buffer.Buffer.concat([buffer2, buffer.Buffer.from(slice)]);
-          }
-          function writeVarInt(i) {
-            const currentLen = buffer2.length;
-            const varintLen = varuintBitcoin.encodingLength(i);
-            buffer2 = buffer.Buffer.concat([buffer2, buffer.Buffer.allocUnsafe(varintLen)]);
-            varuintBitcoin.encode(i, buffer2, currentLen);
-          }
-          function writeVarSlice(slice) {
-            writeVarInt(slice.length);
-            writeSlice(slice);
-          }
-          function writeVector(vector) {
-            writeVarInt(vector.length);
-            vector.forEach(writeVarSlice);
-          }
-          writeVector(witness);
-          return buffer2;
-        }
-    </script>
-    <script>
-        function createQR( content ) {
-            var dataUriPngImage = document.createElement( "img" ),
-            s = QRCode.generatePNG( content, {
-                ecclevel: 'M',
-                format: 'html',
-                fillcolor: '#FFFFFF',
-                textcolor: '#000000',
-                margin: 4,
-                modulesize: 8,
-            });
-            dataUriPngImage.src = s;
-            dataUriPngImage.id = "qr_code";
-            return dataUriPngImage;
-        }
-    </script>
-    <script>
-        function psbtIsSignedByPubkey( psbthex, pubkey ) {
-            try {
-                var psbt = bitcoinjs.Psbt.fromHex( psbthex, {network: bitcoinjs.networks.regtest} );
-                return psbt.validateSignaturesOfInput( 0, buffer.Buffer.from( pubkey, "hex" ) )
-            } catch ( e ) {
-                return false;
-            }
-        }
-    </script>
-    <script>
-        function pushBTCpmt( rawtx ) {
-            var xhttp = new XMLHttpRequest();
-            xhttp.onreadystatechange = function() {
-                if ( this.readyState == 4 && ( this.status > 199 && this.status < 300 ) ) {
-                    var response = this.responseText;
-                    console.log( "Your transaction was broadcasted, your txid is: " + response );
-                }
-            };
-            xhttp.open( "POST", "http://localhost:4200/api/tx", true );
-            xhttp.send( rawtx );
-        }
-    </script>
-    <script>
-            
-    </script>
-    <script>
-        function withdrawFromLatestFidelityBond( txid, txindex, amount, myaddress, privkey, revhash, openeekey, openerkey ) {
-            var original_quantity_of_sats = amount;
-            var fee_amount = 500;
-            var new_quantity_of_sats = original_quantity_of_sats - fee_amount;
-            var witnessscript = generateRevocableFidelityBondScript( revhash, openeekey, openerkey );
-            var p2wsh = bitcoinjs.payments.p2wsh({redeem: {output: witnessscript, network: bitcoinjs.networks.regtest}, network: bitcoinjs.networks.regtest });
-            var outputscript = "00" + bitcoinjs.crypto.sha256( witnessscript ).toString( 'hex' );
-
-            var psbt = new bitcoinjs.Psbt({network: bitcoinjs.networks.regtest});
-            psbt.addInput({
-                hash: txid,
-                index: txindex,
-                sequence: 1008,
-                witnessScript: p2wsh.redeem.output,
-                witnessUtxo: {
-                    script: buffer.Buffer.from( '0020' + bitcoinjs.crypto.sha256( buffer.Buffer.from( witnessscript, 'hex' ) ).toString( 'hex' ), 'hex' ),
-                        value: original_quantity_of_sats
-                },
-            });
-            psbt.addOutput({
-                address: myaddress,
-                value: new_quantity_of_sats,
-            });
-            psbt.signInput( 0, bitcoinjs.ECPair.fromPrivateKey( buffer.Buffer.from( privkey, "hex" ) ) );
-            var getFinalScripts = ( txindex, input, script ) => {
-                //Step 1: Check to make sure the meaningful locking script matches what you expect
-                var decompiled = bitcoinjs.script.decompile( script );
-                if ( !decompiled ) {
-                    throw new Error( `Can not finalize input #${txindex}` )
-                }
-                //Step 2: Create final scripts
-                var stack_elements = [];
-                stack_elements.push( input.partialSig[ 0 ].signature );
-                stack_elements.push( '' );
-                var witnessStack = bitcoinjs.payments.p2wsh({
-                    redeem: {
-                        output: script,
-                        input: bitcoinjs.script.compile( stack_elements ),
-                    }
+                var tx_refund_pauls_sig = tapscript.Signer.taproot.sign( privkey, tx_refund_txdata_paul, 0, { extension: tapscript.Tap.encodeScript( refund_scripts[ 1 ] ) });
+                //the following sig should move the money from the refund address to vicky
+                tx_refund_txdata_paul.vin[ 0 ].witness = [ 0, tx_refund_pauls_sig, refund_scripts[ 1 ], refund_cblock ];
+                var tx_refund_txhex = tapscript.Tx.encode( tx_refund_txdata_paul ).hex;
+                //versions for vicky
+                var tx_funding_txdata_vicky = tapscript.Tx.create({
+                  vin  : [{
+                    txid: tx_funding_txid,
+                    vout: tx_funding_vout,
+                    prevout: {
+                      value: tx_funding_amt,
+                      scriptPubKey: tapscript.Address.toScriptPubKey( tx_funding_address )
+                    },
+                  }],
+                  vout : [{
+                    value: tx_funding_amt - 500,
+                    scriptPubKey: tapscript.Address.toScriptPubKey( post_funding_address_vicky )
+                  }]
                 });
-                return {
-                    finalScriptWitness: witnessStackToScriptWitness( witnessStack.witness )
-                }
-            }
-            psbt.validateSignaturesOfInput( 0 );
-            psbt.finalizeInput( 0, getFinalScripts );
-            return psbt.extractTransaction().toHex();
-        }
-    </script>
-    <script>
-        function withdrawFromRevokedFidelityBond( txid, txindex, amount, myaddress, privkey, revPreimage, revhash, openeekey, openerkey ) {
-            var original_quantity_of_sats = amount;
-            var fee_amount = 500;
-            var new_quantity_of_sats = original_quantity_of_sats - fee_amount;
-            var witnessscript = generateRevocableFidelityBondScript( revhash, openeekey, openerkey );
-            var p2wsh = bitcoinjs.payments.p2wsh({redeem: {output: witnessscript, network: bitcoinjs.networks.regtest}, network: bitcoinjs.networks.regtest });
-            var outputscript = "00" + bitcoinjs.crypto.sha256( witnessscript ).toString( 'hex' );
-
-            var psbt = new bitcoinjs.Psbt({network: bitcoinjs.networks.regtest});
-            psbt.addInput({
-                hash: txid,
-                index: txindex,
-                witnessScript: p2wsh.redeem.output,
-                witnessUtxo: {
-                    script: buffer.Buffer.from( '0020' + bitcoinjs.crypto.sha256( buffer.Buffer.from( witnessscript, 'hex' ) ).toString( 'hex' ), 'hex' ),
-                        value: original_quantity_of_sats
-                },
-            });
-            psbt.addOutput({
-                address: myaddress,
-                value: new_quantity_of_sats,
-            });
-            psbt.signInput( 0, bitcoinjs.ECPair.fromPrivateKey( buffer.Buffer.from( privkey, "hex" ) ) );
-            var getFinalScripts = ( txindex, input, script ) => {
-                //Step 1: Check to make sure the meaningful locking script matches what you expect
-                var decompiled = bitcoinjs.script.decompile( script );
-                if ( !decompiled ) {
-                    throw new Error( `Can not finalize input #${txindex}` )
-                }
-                //Step 2: Create final scripts
-                var stack_elements = [];
-                stack_elements.push( input.partialSig[ 0 ].signature );
-                stack_elements.push( buffer.Buffer.from( revPreimage, "hex" ) );
-                stack_elements.push( bitcoinjs.opcodes.OP_1 );
-                var witnessStack = bitcoinjs.payments.p2wsh({
-                    redeem: {
-                        output: script,
-                        input: bitcoinjs.script.compile( stack_elements ),
-                    }
+                console.log( "tx_funding_txdata_vicky:" );
+                console.log( JSON.stringify( tx_funding_txdata_vicky ) );
+                var tx_funding_pauls_sig_vicky = tapscript.Signer.segwit.sign( privkey, tx_funding_txdata_vicky, 0, { script: tx_funding_script });
+                tx_funding_txdata_vicky.vin[ 0 ].witness = [ 0, 0, tx_funding_pauls_sig_vicky, tx_funding_script ];
+                var tx_funding_txhex_vicky = tapscript.Tx.encode( tx_funding_txdata_vicky ).hex;
+                console.log( "tx_funding_txhex_vicky:", tx_funding_txhex_vicky );
+                var post_funding_txid = tapscript.Tx.util.getTxid( tx_funding_txhex_vicky );
+                console.log( "post_funding_txid:", post_funding_txid );
+                var post_funding_vout = 0;
+                var post_funding_amt = tx_funding_amt - 500;
+                var post_funding_txdata_vicky = tapscript.Tx.create({
+                  vin  : [{
+                    txid: post_funding_txid,
+                    vout: post_funding_vout,
+                    prevout: {
+                      value: post_funding_amt,
+                      scriptPubKey: tapscript.Address.toScriptPubKey( post_funding_address_vicky )
+                    },
+                  }],
+                  vout : [{
+                    value: post_funding_amt - 500,
+                    scriptPubKey: tapscript.Address.toScriptPubKey( refund_address )
+                  }]
                 });
-                return {
-                    finalScriptWitness: witnessStackToScriptWitness( witnessStack.witness )
-                }
-            }
-            psbt.finalizeInput( 0, getFinalScripts );
-            return psbt.extractTransaction().toHex();
-        }
-    </script>
-    <script>
-        function generateRevocableHtlcScript( revhash, pmthash, openerkey, openeekey ) {
-            var script = bitcoinjs.script.fromASM(
-                makeRevocableHtlcScript( revhash, pmthash, openerkey, openeekey )
-                .trim()
-                .replace(/\s+/g, ' '),
-            );
-            return script;
-        }
-        function makeRevocableHtlcScript( revhash, pmthash, openerkey, openeekey ) {
-            var scr = `
-                OP_IF
-                    OP_HASH160
-                    ${ revhash }
-                    OP_EQUALVERIFY
-                    ${ openerkey }
-                    OP_SWAP
-                OP_ENDIF
-                OP_IF
-                    OP_IF
-                        OP_SHA256
-                        ${ pmthash }
-                        OP_EQUALVERIFY
-                        ${ bitcoinjs.script.number.encode( 1008 ).toString( 'hex' ) }
-                        OP_CHECKSEQUENCEVERIFY
-                        OP_DROP
-                        ${ openeekey }
-                    OP_ELSE
-                        ${ bitcoinjs.script.number.encode( 2016 ).toString( 'hex' ) }
-                        OP_CHECKSEQUENCEVERIFY
-                        OP_DROP
-                        ${ openerkey }
-                    OP_ENDIF
-                OP_ENDIF
-                OP_CHECKSIG
-          `.replace( '\n', '' ).replace( / /g, '' );
-            return scr;
-        }
-        function htlc( revhash, pmthash, openerkey, openeekey ) {
-            var p2wsh = bitcoinjs.payments.p2wsh({redeem: {output: generateRevocableHtlcScript( revhash, pmthash, openerkey, openeekey ), network: bitcoinjs.networks.regtest}, network: bitcoinjs.networks.regtest });
-            return p2wsh.address;
-        }
-    </script>
-    <script>
-        function withdrawFromRevokedHtlc( txid, txindex, amount, myaddress, privkey, revhash, pmthash, openerkey, openeekey, revpreimage ) {
-            var original_quantity_of_sats = amount;
-            var fee_amount = 500;
-            var new_quantity_of_sats = original_quantity_of_sats - fee_amount;
-            var witnessscript = generateRevocableHtlcScript( revhash, pmthash, openerkey, openeekey );
-            var p2wsh = bitcoinjs.payments.p2wsh({redeem: {output: witnessscript, network: bitcoinjs.networks.regtest}, network: bitcoinjs.networks.regtest });
-            var outputscript = "00" + bitcoinjs.crypto.sha256( witnessscript ).toString( 'hex' );
-
-            var psbt = new bitcoinjs.Psbt({network: bitcoinjs.networks.regtest});
-            psbt.addInput({
-                hash: txid,
-                index: txindex,
-                witnessScript: p2wsh.redeem.output,
-                witnessUtxo: {
-                    script: buffer.Buffer.from( '0020' + bitcoinjs.crypto.sha256( buffer.Buffer.from( witnessscript, 'hex' ) ).toString( 'hex' ), 'hex' ),
-                        value: original_quantity_of_sats
-                },
-            });
-            psbt.addOutput({
-                address: myaddress,
-                value: new_quantity_of_sats,
-            });
-            psbt.signInput( 0, bitcoinjs.ECPair.fromPrivateKey( buffer.Buffer.from( privkey, "hex" ) ) );
-            var getFinalScripts = ( txindex, input, script ) => {
-                //Step 1: Check to make sure the meaningful locking script matches what you expect
-                var decompiled = bitcoinjs.script.decompile( script );
-                if ( !decompiled ) {
-                    throw new Error( `Can not finalize input #${txindex}` )
-                }
-                //Step 2: Create final scripts
-                var stack_elements = [];
-                stack_elements.push( input.partialSig[ 0 ].signature );
-                stack_elements.push( "" );
-                stack_elements.push( buffer.Buffer.from( revpreimage, "hex" ) );
-                stack_elements.push( bitcoinjs.script.OPS.OP_1 );
-                var witnessStack = bitcoinjs.payments.p2wsh({
-                    redeem: {
-                        output: script,
-                        input: bitcoinjs.script.compile( stack_elements ),
-                    }
+                console.log( "post_funding_txdata_vicky:" );
+                console.log( JSON.stringify( post_funding_txdata_vicky ) );
+                var post_funding_pauls_sig_vicky = tapscript.Signer.segwit.sign( privkey, post_funding_txdata_vicky, 0, { script: post_funding_script_vicky });
+                var post_funding_txhex_vicky = tapscript.Tx.encode( post_funding_txdata_vicky ).hex;
+                var tx_refund_txid = tapscript.Tx.util.getTxid( post_funding_txhex_vicky );
+                var tx_refund_vout = 0;
+                var tx_refund_amt = post_funding_amt - 500;
+                var tx_refund_txdata_vicky = tapscript.Tx.create({
+                  vin  : [{
+                    txid: tx_refund_txid,
+                    vout: tx_refund_vout,
+                    //todo: fix the sequence
+                    // sequence: 144 * 7,
+                    sequence: 1 * 7,
+                    prevout: {
+                      value: tx_refund_amt,
+                      scriptPubKey: tapscript.Address.toScriptPubKey( refund_address )
+                    },
+                  }],
+                  vout : [{
+                    value: tx_refund_amt - 500,
+                    scriptPubKey: tapscript.Address.toScriptPubKey( vickys_address )
+                  }]
                 });
-                return {
-                    finalScriptWitness: witnessStackToScriptWitness( witnessStack.witness )
+                console.log( "tx_refund_txdata_vicky:" );
+                console.log( JSON.stringify( tx_refund_txdata_vicky ) );
+                var tx_refund_pauls_sig_vicky = tapscript.Signer.taproot.sign( privkey, tx_refund_txdata_vicky, 0, { extension: tapscript.Tap.encodeScript( refund_scripts[ 1 ] ) });
+                //the following sig should move the money from the refund address to vicky
+                var pauls_sigs = [ tx_funding_pauls_sig_vicky.hex, post_funding_pauls_sig_vicky.hex, tx_refund_pauls_sig_vicky.hex ];
+                console.log( `give these sigs to vicky: ${JSON.stringify( pauls_sigs )}` );
+                paul_db[ "force_close_txs" ] = {
+                    to_reveal: tx_funding_txhex_paul,
+                    to_delay: post_funding_txhex_paul,
+                    final_tx: tx_refund_txhex,
+                    vickys_publication_hash,
+                    vickys_revocation_hash,
+                    pauls_publication_preimage,
+                    pauls_revocation_preimage,
                 }
+                paul_db[ "tx_funding_amt" ] = tx_funding_amt;
+                paul_db[ "tx_funding_address" ] = tx_funding_address;
+                paul_db[ "tx_funding_script" ] = tx_funding_script;
+                paul_db[ "vickys_key" ] = vickys_key;
+                paul_db[ "vickys_address" ] = vickys_address;
+                paul_db[ "balance" ] = {
+                    reserve: 0,
+                    local: 0,
+                    remote: tx_refund_amt - 500,
+                }
+                alert( `Send the data in your console to Vicky` );
             }
-            psbt.validateSignaturesOfInput( 0 );
-            psbt.finalizeInput( 0, getFinalScripts );
-            return psbt.extractTransaction().toHex();
-        }
-    </script>
-    <script>
-        function startSpookyGive( htlc_amount, counterparty ) {
-            var txid = JSON.parse( sessionStorage[ "channel_info" ] )[ "txid_of_funding_tx" ];
-            console.log( "txid:", txid );
-            var txindex = JSON.parse( sessionStorage[ "channel_info" ] )[ "txindex_of_funding_tx" ];
-            var amount = JSON.parse( sessionStorage[ "channel_info" ] )[ "amount" ];
-            var pubkeys = [ JSON.parse( sessionStorage[ "channel_info" ] )[ "pubkey" ], JSON.parse( sessionStorage[ "channel_info" ] )[ "theirpubkey" ] ];
-            var privkey = JSON.parse( sessionStorage[ "channel_info" ] )[ "privkey" ];
-            var revhash = JSON.parse( sessionStorage[ "channel_info" ] )[ "state_one" ][ "revhash" ];
-            var openeekey = JSON.parse( sessionStorage[ "channel_info" ] )[ "theirpubkey" ];
-            var openerkey = JSON.parse( sessionStorage[ "channel_info" ] )[ "pubkey" ];
-            var new_revpreimage = bitcoinjs.ECPair.makeRandom().privateKey.toString( "hex" );
-            var new_revhash = bitcoinjs.crypto.hash160( buffer.Buffer.from( new_revpreimage, "hex" ) ).toString( "hex" );
-            var channel_info = JSON.parse( sessionStorage[ "channel_info" ] );
-            var fidelity_bond_address = fidelityBond( new_revhash, openeekey, openerkey );
-            var channel_info = JSON.parse( sessionStorage[ "channel_info" ] );
-            var state_two = {}
-            state_two[ "revpreimage" ] = new_revpreimage;
-            state_two[ "revhash" ] = new_revhash;
-            state_two[ "htlc_amount" ] = htlc_amount;
-            state_two[ "fidelity_bond_address" ] = fidelity_bond_address;
-            channel_info[ "state_two" ] = state_two;
-            channel_info[ "openee_segwit_address" ] = getNativeSegwitAddressFromPubkeyHex( channel_info[ "theirpubkey" ] );
-            sessionStorage[ "channel_info" ] = JSON.stringify( channel_info );
-            var payment_data = {}
-            payment_data[ "txid" ] = JSON.parse( sessionStorage[ "channel_info" ] )[ "txid_of_funding_tx" ];
-            payment_data[ "txindex" ] = JSON.parse( sessionStorage[ "channel_info" ] )[ "txindex_of_funding_tx" ];
-            payment_data[ "amount" ] = JSON.parse( sessionStorage[ "channel_info" ] )[ "amount" ];
-            payment_data[ "htlc_amount" ] = htlc_amount;
-            payment_data[ "pubkeys" ] = [ JSON.parse( sessionStorage[ "channel_info" ] )[ "pubkey" ], JSON.parse( sessionStorage[ "channel_info" ] )[ "theirpubkey" ] ];
-            payment_data[ "fidelity_bond_address" ] = fidelity_bond_address;
-            payment_data[ "privkey" ] = JSON.parse( sessionStorage[ "channel_info" ] )[ "privkey" ];
-            payment_data[ "revhash" ] = JSON.parse( sessionStorage[ "channel_info" ] )[ "revhash" ];
-            payment_data[ "newrevhash" ] = new_revhash;
-            payment_data[ "openeekey" ] = JSON.parse( sessionStorage[ "channel_info" ] )[ "theirpubkey" ];
-            payment_data[ "openerkey" ] = JSON.parse( sessionStorage[ "channel_info" ] )[ "pubkey" ];
-            sessionStorage[ "payment_data" ] = JSON.stringify( payment_data );
-            var message = {}
-            message[ "type" ] = "invoice request";
-            var content = {}
-            content[ "channel" ] = txid;
-            content[ "amount" ] = htlc_amount;
-            content[ "revhash" ] = new_revhash;
-            message[ "content" ] = content;
-            sendDM( JSON.stringify( message ), counterparty );
-        }
-    </script>
-    <script>
-        function generatePaymentPreimageAndHash() {
-            var obj = {}
-            obj[ "preimage" ] = bitcoinjs.ECPair.makeRandom().privateKey.toString( "hex" );
-            obj[ "hash" ] = bitcoinjs.crypto.sha256( buffer.Buffer.from( obj[ "preimage" ], "hex" ) ).toString( "hex" );
-            obj[ "htlcrevpreimage" ] = bitcoinjs.ECPair.makeRandom().privateKey.toString( "hex" );
-            obj[ "htlcrevhash" ] = bitcoinjs.crypto.hash160( buffer.Buffer.from( obj[ "preimage" ], "hex" ) ).toString( "hex" );
-            return obj;
-        }
-    </script>
-    <script>
-        function getAddressIndexFromOffchainTx( psbthex, htlc_address ) {
-            var psbt = bitcoinjs.Psbt.fromHex( psbthex, {network: bitcoinjs.networks.regtest} );
-            var outputs = psbt.txOutputs;
-            var indexnum = 0;
-            outputs.forEach( function( output, index ) {
-                if ( output[ "address" ] == htlc_address ) {
-                    indexnum = index;
-                }
-            });
-            return indexnum;
-        }
-    </script>
-    <script>
-        function getAddressValueFromOffchainTx( psbthex, htlc_address ) {
-            var psbt = bitcoinjs.Psbt.fromHex( psbthex, {network: bitcoinjs.networks.regtest} );
-            var outputs = psbt.txOutputs;
-            var sats = 0;
-            outputs.forEach( function( output, index ) {
-                if ( output[ "address" ] == htlc_address ) {
-                    sats = output[ "value" ];
-                }
-            });
-            return sats;
-        }
-    </script>
-</body>
+            createChannel();
+        </script>
+    </body>
 </html>
