@@ -11,7 +11,7 @@ Well, originally I wanted to write an actual lightning implementation, but then 
 
 # Why are you doing this?
 
-For fun. Also because there are some thing about the lightning network that I want to change and it will be easier to do that if I have my own version.
+For fun. Also because there are some things about the lightning network that I want to change and it will be easier to do that if I have my own version.
 
 # Why does it not work?
 
