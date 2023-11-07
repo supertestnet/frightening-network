@@ -51,4 +51,11 @@ An important aspect of the frightening network is that message types are indicat
 4. Unused
 5. Paul sends Vicky info requesting a payment. Includes a payment hash.
 6. Vicky sends Paul info requesting a payment. Includes a payment hash.
-7. 
+10. Vicky sends Paul info intiating a state change. Includes a new publication hash, a new revocation hash, and an amount.
+15. Paul sends Vicky info advancing the state change. Includes a new publication hash, a new revocation hash, and a bitcoin address where the amount should be sent if the transaction ends up on the base layer.
+20. Vicky sends Paul info advancing the state change. Includes 3 signatures.
+25. Paul sends Vicky info finalizing the state change. Includes 3 signatures.
+30. Vicky sends Paul info revoking the old state. Includes a revocation preimage.
+35. Paul sends Vicky info revoking the old state. Includes a revocation preimage.
+40. Paul sends Vicky info to prompt Vicky to initiate another state change to resolve an outstanding htlc that pays Paul. Includes a payment preimage.
+45. Vicky sends Paul info to prompt him to expect another state change to resolve an outstanding htlc that pays Vicky. Includes a payment preimage.
