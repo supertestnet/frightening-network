@@ -42,7 +42,7 @@ Due to the last issue, to use this app you sort of have to sift through the sour
 
 # Message types
 
-An important aspect of the frightening network is that message types are indicated numerically. Here they the numbers currently in use:
+An important aspect of the frightening network is that message types are indicated numerically. Here are the numbers currently in use and what they mean:
 
 0. Paul sends Vicky info on how to open a channel with him. Includes his pubkey, a publication hash, and a revocation hash
 1. Vicky sends Paul info indicating she wants to open a channel with him. Inludes her utxo and key data to indicate what utxo she will fund the channel with
