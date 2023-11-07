@@ -31,7 +31,7 @@ If you can connect it to your own regtest node the following things work:
 
 # What doesn't work?
 
-- Neither party detects cheating attempts
+- neither party detects cheating attempts
 - cooperative closures don't work
 - user balances are not yet displayed
 - multiple channels don't work
