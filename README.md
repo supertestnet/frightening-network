@@ -39,3 +39,16 @@ If you can connect it to your own regtest node the following things work:
 - there are no buttons for doing anything listed in the section on stuff that works
 
 Due to the last issue, to use this app you sort of have to sift through the source code and identify some esoteric commands. But it's all good, I'm just throwing this stuff up on github early so people can see what I'm working on in the open. Stay tuned for more.
+
+# Message types
+
+An important aspect of the frightening network is that message types are indicated numerically. Here they the numbers currently in use:
+
+0. Paul sends Vicky info on how to open a channel with him. Includes his pubkey, a publication hash, and a revocation hash
+1. Vicky sends Paul info indicating she wants to open a channel with him. Inludes her utxo and key data to indicate what utxo she will fund the channel with
+2. Paul sends Vicky info establishing a "refund state" i.e. the initial state of the channel. Includes 3 signatures.
+3. Unused
+4. Unused
+5. Paul sends Vicky info requesting a payment. Includes a payment hash.
+6. Vicky sends Paul info requesting a payment. Includes a payment hash.
+7. 
