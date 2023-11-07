@@ -20,6 +20,16 @@
                 hash.update( new Uint8Array( s ) );
                 return bytesToHex( hash.digest() );
             }
+            var sha256 = s => {
+                if ( typeof s == "string" ) s = new TextEncoder().encode( s );
+                return crypto.subtle.digest( 'SHA-256', s ).then( hashBuffer => {
+                    var hashArray = Array.from( new Uint8Array( hashBuffer ) );
+                    var hashHex = hashArray
+                        .map( bytes => bytes.toString( 16 ).padStart( 2, '0' ) )
+                        .join( '' );
+                    return hashHex;
+                });
+            }
         </script>
         <style>
             * {
@@ -58,6 +68,69 @@
             for ( var key of url_keys ) $_GET[ key ] = url_params.get( key );
         </script>
         <script>
+            var getRand = size => bytesToHex(crypto.getRandomValues(new Uint8Array(size)));
+            var changeStateWithHtlc = async () => {
+                var am_sending = confirm( `Click ok if you want to send Paul money (in which case you must pass in the pmthash) or click cancel if you want Paul to send you money` );
+                console.log( "I am sending, right?", am_sending );
+                if ( !am_sending ) {
+                    var preimage = getRand( 32 );
+                    var pmthash = await sha256( hexToBytes( preimage ) );
+                    console.log( "give this pmthash to paul:", pmthash );
+                    var how_much_msg = `How much money (in sats) do you want Paul to send to you?`;
+                } else {
+                    var pmthash = prompt( `Enter the pmthash given to you by Paul` );
+                    var how_much_msg = `How much money (in sats) do you want to send to Paul? (Must be less than ${vicky_db[ "balance" ][ "local" ]} sats)`;
+                }
+                var amt = prompt( how_much_msg );
+                amt = Number( amt );
+                await changeState( pmthash, "", am_sending, amt );
+                if ( am_sending ) var preimage = prompt( `enter a preimage from Paul` );
+                else console.log( `send this preimage to Paul: ${preimage}` );
+                var resolve_htlc = true;
+                var real_pmthash = await sha256( hexToBytes( preimage ) );
+                var claimed_pmthash = vicky_db[ "force_close_txs" ][ "pmthash" ];
+                //todo: automate the force close
+                if ( real_pmthash != claimed_pmthash ) return alert( `Oh no! Your counterparty gave you a bad preimage! Time to force close!` );
+                changeState( "", preimage, am_sending, "", resolve_htlc );
+            }
+            function generateHtlcWherePaulReceives(paulPubkey, vickyPubkey, pmthash, timelock) {
+                return [
+                    'OP_SIZE',
+                    32,
+                    'OP_EQUALVERIFY',
+                    'OP_SHA256',
+                    pmthash,
+                    'OP_EQUAL',
+                    'OP_IF',
+                        paulPubkey,
+                    'OP_ELSE',
+                        timelock,
+                        'OP_CHECKSEQUENCEVERIFY',
+                        'OP_DROP',
+                        vickyPubkey,
+                    'OP_ENDIF',
+                    'OP_CHECKSIG'
+                ];
+            }
+            function generateHtlcWhereVickyReceives(paulPubkey, vickyPubkey, pmthash, timelock) {
+                return [
+                    'OP_SIZE',
+                    32,
+                    'OP_EQUALVERIFY',
+                    'OP_SHA256',
+                    pmthash,
+                    'OP_EQUAL',
+                    'OP_IF',
+                        vickyPubkey,
+                    'OP_ELSE',
+                        timelock,
+                        'OP_CHECKSEQUENCEVERIFY',
+                        'OP_DROP',
+                        paulPubkey,
+                    'OP_ENDIF',
+                    'OP_CHECKSIG'
+                ];
+            }
             var mempool_checker = txid => {
                 var txhex = prompt( `Please enter the txhex of a tx with this txid: ${txid}` );
                 var tx = tapscript.Tx.decode( txhex );
@@ -112,15 +185,14 @@
                 var justice_txhex = tapscript.Tx.encode( justice_txdata ).hex;
                 console.log( "justice_txhex:", justice_txhex );
             }
-            var changeState = async () => {
-                var send_or_receive = confirm( `Click ok if you want to send Paul money or click cancel if you want Paul to send you money` );
-                var how_much_msg = `How much money (in sats) do you want to send to Paul? (Must be less than ${vicky_db[ "balance" ][ "local" ]} sats)`;
-                if ( !send_or_receive ) how_much_msg = `How much money (in sats) do you want Paul to send to you?`;
-                var amt = prompt( how_much_msg );
-                amt = Number( amt );
-                if ( send_or_receive && amt >= vicky_db[ "balance" ][ "local" ] ) return;
-                if ( send_or_receive ) var amount_for_paul = vicky_db[ "balance" ][ "remote" ] + amt;
-                else var amount_for_paul = vicky_db[ "balance" ][ "remote" ] - amt;
+            var changeState = async ( pmthash, preimage, am_sending, amt, resolve_htlc ) => {
+                if ( !resolve_htlc ) {
+                    if ( am_sending && amt >= vicky_db[ "balance" ][ "local" ] ) return;
+                    if ( am_sending ) var amount_for_paul = vicky_db[ "balance" ][ "remote" ] + amt;
+                    else var amount_for_paul = vicky_db[ "balance" ][ "remote" ] - amt;
+                } else {
+                    var amount_for_paul = vicky_db[ "tx_funding_amt" ] + 500 - vicky_db[ "balance" ][ "reserve" ] - vicky_db[ "balance" ][ "local" ];
+                }
                 var vickys_new_publication_preimage = bytesToHex( nobleSecp256k1.utils.randomPrivateKey() ).substring( 0, 32 );
                 var vickys_new_publication_hash = rmd160( hexToBytes( vickys_new_publication_preimage ) );
                 var vickys_new_revocation_preimage = bytesToHex( nobleSecp256k1.utils.randomPrivateKey() ).substring( 0, 32 );
@@ -251,14 +323,86 @@
                       scriptPubKey: tapscript.Address.toScriptPubKey( new_tx_commit_address )
                     },
                   }],
-                  vout : [{
-                    value: new_tx_commit_amt - amount_for_paul - 500,
-                    scriptPubKey: tapscript.Address.toScriptPubKey( vickys_address )
-                  },{
-                    value: amount_for_paul,
-                    scriptPubKey: tapscript.Address.toScriptPubKey( pauls_address )
-                  }]
+                  vout : []
                 });
+                var timelock = 8;
+                if ( pmthash && am_sending ) {
+                    var htlc_script = generateHtlcWherePaulReceives( pauls_key, vickys_key, pmthash, timelock );
+                    var htlc_address = tapscript.Address.p2wsh.fromScript( htlc_script, "regtest" );
+                    new_tx_commit_txdata[ "vout" ].push({
+                        value: new_tx_commit_amt - amount_for_paul - 500,
+                        scriptPubKey: tapscript.Address.toScriptPubKey( vickys_address )
+                    },{
+                        value: amount_for_paul,
+                        scriptPubKey: tapscript.Address.toScriptPubKey( htlc_address )
+                    });
+                }
+                if ( pmthash && !am_sending ) {
+                    var htlc_script = generateHtlcWhereVickyReceives( pauls_key, vickys_key, pmthash, timelock );
+                    var htlc_address = tapscript.Address.p2wsh.fromScript( htlc_script, "regtest" );
+                    new_tx_commit_txdata[ "vout" ].push({
+                        value: new_tx_commit_amt - amount_for_paul - 500,
+                        scriptPubKey: tapscript.Address.toScriptPubKey( htlc_address )
+                    },{
+                        value: amount_for_paul,
+                        scriptPubKey: tapscript.Address.toScriptPubKey( pauls_address )
+                    });
+                }
+                if ( !pmthash ) {
+                    new_tx_commit_txdata[ "vout" ].push({
+                        value: new_tx_commit_amt - amount_for_paul - 500,
+                        scriptPubKey: tapscript.Address.toScriptPubKey( vickys_address )
+                    },{
+                        value: amount_for_paul,
+                        scriptPubKey: tapscript.Address.toScriptPubKey( pauls_address )
+                    });
+                }
+                if ( pmthash ) {
+                    var new_tx_commit_txhex = tapscript.Tx.encode( new_tx_commit_txdata ).hex;
+                    var new_htlc_txid = tapscript.Tx.util.getTxid( new_tx_commit_txhex );
+                    if ( preimage ) {
+                        var htlc_script = generateHtlcWhereVickyReceives( pauls_key, vickys_key, pmthash, timelock );
+                        var htlc_address = tapscript.Address.p2wsh.fromScript( htlc_script, "regtest" );
+                        var htlc_txdata = tapscript.Tx.create({
+                          vin  : [{
+                            txid: new_htlc_txid,
+                            vout: 0,
+                            prevout: {
+                              value: new_tx_commit_amt - amount_for_paul - 500,
+                              scriptPubKey: tapscript.Address.toScriptPubKey( htlc_address )
+                            },
+                          }],
+                          vout : [{
+                            value: new_tx_commit_amt - amount_for_paul - 500 - 500,
+                            scriptPubKey: tapscript.Address.toScriptPubKey( vickys_address )
+                          }]
+                        });
+                        var htlc_sig = tapscript.Signer.segwit.sign( privkey, htlc_txdata, 0, {script: htlc_script} );
+                        htlc_txdata.vin[ 0 ].witness = [ htlc_sig, preimage, htlc_script ];
+                        var htlc_txhex_if_vicky_received_and_paul_broadcasted = tapscript.Tx.encode( htlc_txdata ).hex;
+                    } else {
+                        var htlc_script = generateHtlcWherePaulReceives( pauls_key, vickys_key, pmthash, timelock );
+                        var htlc_address = tapscript.Address.p2wsh.fromScript( htlc_script, "regtest" );
+                        var htlc_txdata = tapscript.Tx.create({
+                          vin  : [{
+                            txid: new_htlc_txid,
+                            vout: 1,
+                            seqence: timelock,
+                            prevout: {
+                              value: amount_for_paul,
+                              scriptPubKey: tapscript.Address.toScriptPubKey( htlc_address )
+                            },
+                          }],
+                          vout : [{
+                            value: amount_for_paul - 500,
+                            scriptPubKey: tapscript.Address.toScriptPubKey( vickys_address )
+                          }]
+                        });
+                        var htlc_sig = tapscript.Signer.segwit.sign( privkey, htlc_txdata, 0, {script: htlc_script} );
+                        htlc_txdata.vin[ 0 ].witness = [ htlc_sig, "ab".repeat( 32 ), htlc_script ];
+                        var htlc_txhex_if_paul_received_and_paul_broadcasted = tapscript.Tx.encode( htlc_txdata ).hex;
+                    }
+                }
                 var final_amt = new_tx_commit_amt - amount_for_paul - 500;
                 var new_tx_commit_vickys_sig = tapscript.Signer.taproot.sign( privkey, new_tx_commit_txdata, 0, { extension: tapscript.Tap.encodeScript( new_tx_commit_scripts[ 1 ] ) });
                 console.log( `give these three sigs to Paul: ${JSON.stringify( [bytesToHex( new_tx_funding_vickys_sig ), bytesToHex( new_post_funding_vickys_sig ), bytesToHex( new_tx_commit_vickys_sig )] )}` );
@@ -322,14 +466,86 @@
                       scriptPubKey: tapscript.Address.toScriptPubKey( new_tx_commit_address )
                     },
                   }],
-                  vout : [{
-                    value: new_tx_commit_amt - amount_for_paul - 500,
-                    scriptPubKey: tapscript.Address.toScriptPubKey( vickys_address )
-                  },{
-                    value: amount_for_paul,
-                    scriptPubKey: tapscript.Address.toScriptPubKey( pauls_address )
-                  }]
+                  vout : []
                 });
+                var timelock = 8;
+                if ( pmthash && am_sending ) {
+                    var htlc_script = generateHtlcWherePaulReceives( pauls_key, vickys_key, pmthash, timelock );
+                    var htlc_address = tapscript.Address.p2wsh.fromScript( htlc_script, "regtest" );
+                    new_tx_commit_txdata[ "vout" ].push({
+                        value: new_tx_commit_amt - amount_for_paul - 500,
+                        scriptPubKey: tapscript.Address.toScriptPubKey( vickys_address )
+                    },{
+                        value: amount_for_paul,
+                        scriptPubKey: tapscript.Address.toScriptPubKey( htlc_address )
+                    });
+                }
+                if ( pmthash && !am_sending ) {
+                    var htlc_script = generateHtlcWhereVickyReceives( pauls_key, vickys_key, pmthash, timelock );
+                    var htlc_address = tapscript.Address.p2wsh.fromScript( htlc_script, "regtest" );
+                    new_tx_commit_txdata[ "vout" ].push({
+                        value: new_tx_commit_amt - amount_for_paul - 500,
+                        scriptPubKey: tapscript.Address.toScriptPubKey( htlc_address )
+                    },{
+                        value: amount_for_paul,
+                        scriptPubKey: tapscript.Address.toScriptPubKey( pauls_address )
+                    });
+                }
+                if ( !pmthash ) {
+                    new_tx_commit_txdata[ "vout" ].push({
+                        value: new_tx_commit_amt - amount_for_paul - 500,
+                        scriptPubKey: tapscript.Address.toScriptPubKey( vickys_address )
+                    },{
+                        value: amount_for_paul,
+                        scriptPubKey: tapscript.Address.toScriptPubKey( pauls_address )
+                    });
+                }
+                if ( pmthash ) {
+                    var new_tx_commit_txhex = tapscript.Tx.encode( new_tx_commit_txdata ).hex;
+                    var new_htlc_txid = tapscript.Tx.util.getTxid( new_tx_commit_txhex );
+                    if ( preimage ) {
+                        var htlc_script = generateHtlcWhereVickyReceives( pauls_key, vickys_key, pmthash, timelock );
+                        var htlc_address = tapscript.Address.p2wsh.fromScript( htlc_script, "regtest" );
+                        var htlc_txdata = tapscript.Tx.create({
+                          vin  : [{
+                            txid: new_htlc_txid,
+                            vout: 0,
+                            prevout: {
+                              value: new_tx_commit_amt - amount_for_paul - 500,
+                              scriptPubKey: tapscript.Address.toScriptPubKey( htlc_address )
+                            },
+                          }],
+                          vout : [{
+                            value: new_tx_commit_amt - amount_for_paul - 500 - 500,
+                            scriptPubKey: tapscript.Address.toScriptPubKey( vickys_address )
+                          }]
+                        });
+                        var htlc_sig = tapscript.Signer.segwit.sign( privkey, htlc_txdata, 0, {script: htlc_script} );
+                        htlc_txdata.vin[ 0 ].witness = [ htlc_sig, preimage, htlc_script ];
+                        var htlc_txhex_if_vicky_received_and_vicky_broadcasted = tapscript.Tx.encode( htlc_txdata ).hex;
+                    } else {
+                        var htlc_script = generateHtlcWherePaulReceives( pauls_key, vickys_key, pmthash, timelock );
+                        var htlc_address = tapscript.Address.p2wsh.fromScript( htlc_script, "regtest" );
+                        var htlc_txdata = tapscript.Tx.create({
+                          vin  : [{
+                            txid: new_htlc_txid,
+                            vout: 1,
+                            seqence: timelock,
+                            prevout: {
+                              value: amount_for_paul,
+                              scriptPubKey: tapscript.Address.toScriptPubKey( htlc_address )
+                            },
+                          }],
+                          vout : [{
+                            value: amount_for_paul - 500,
+                            scriptPubKey: tapscript.Address.toScriptPubKey( vickys_address )
+                          }]
+                        });
+                        var htlc_sig = tapscript.Signer.segwit.sign( privkey, htlc_txdata, 0, {script: htlc_script} );
+                        htlc_txdata.vin[ 0 ].witness = [ htlc_sig, "ab".repeat( 32 ), htlc_script ];
+                        var htlc_txhex_if_paul_received_and_vicky_broadcasted = tapscript.Tx.encode( htlc_txdata ).hex;
+                    }
+                }
                 var new_tx_commit_vickys_sig = tapscript.Signer.taproot.sign( privkey, new_tx_commit_txdata, 0, { extension: tapscript.Tap.encodeScript( new_tx_commit_scripts[ 1 ] ) });
                 var pauls_data = prompt( "enter three sigs from Paul" );
                 pauls_data = JSON.parse( pauls_data );
@@ -372,6 +588,12 @@
                     vickys_publication_preimage: vickys_new_publication_preimage,
                     vickys_revocation_preimage: vickys_new_revocation_preimage,
                 }
+                if ( pmthash && htlc_txhex_if_paul_received_and_paul_broadcasted ) new_state[ "htlc_txhex_if_paul_received_and_paul_broadcasted" ] = htlc_txhex_if_paul_received_and_paul_broadcasted;
+                if ( pmthash && htlc_txhex_if_paul_received_and_vicky_broadcasted ) new_state[ "htlc_txhex_if_paul_received_and_vicky_broadcasted" ] = htlc_txhex_if_paul_received_and_vicky_broadcasted;
+                if ( pmthash && htlc_txhex_if_vicky_received_and_paul_broadcasted ) new_state[ "htlc_txhex_if_vicky_received_and_paul_broadcasted" ] = htlc_txhex_if_vicky_received_and_paul_broadcasted;
+                if ( pmthash && htlc_txhex_if_vicky_received_and_vicky_broadcasted ) new_state[ "htlc_txhex_if_vicky_received_and_vicky_broadcasted" ] = htlc_txhex_if_vicky_received_and_vicky_broadcasted;
+                if ( pmthash ) new_state[ "pmthash" ] = pmthash;
+                if ( preimage ) new_state[ "preimage" ] = preimage;
                 vicky_db[ "force_close_txs" ] = new_state;
                 var tx = tapscript.Tx.decode( vicky_db[ "force_close_txs" ][ "to_reveal" ] );
                 var vout_sats = Number( tx.vout[ 0 ].value );
@@ -385,7 +607,7 @@
                 alert( `Send the revocation preimage for state ${vicky_db[ "old_states" ].length - 1} to Paul (it's in your console)` );
                 var pauls_revocation_preimage = prompt( `Enter Paul's revocation preimage` );
                 var pauls_revocation_hash = vicky_db[ "old_states" ][ vicky_db[ "old_states" ].length - 1 ][ "pauls_revocation_hash" ];
-                if ( rmd160( hexToBytes( pauls_revocation_preimage ) ) != pauls_revocation_hash ) return alert( "Time to force close! Paul sent you a wrong revocation preimage!" );
+                if ( rmd160( hexToBytes( pauls_revocation_preimage ) ) != pauls_revocation_hash ) return alert( `Time to force close! Paul sent you a wrong revocation preimage! Broadcast these transactions:\n\n${vicky_db[ "force_close_txs" ][ "to_reveal" ]}\n\n${vicky_db[ "force_close_txs" ][ "to_delay" ]}\n\nThen wait 1008 blocks, then broadcast this transaction:\n\n${vicky_db[ "force_close_txs" ][ "final_tx" ]}` );
                 vicky_db[ "old_states" ][ vicky_db[ "old_states" ].length - 1 ][ "pauls_revocation_preimage" ] = pauls_revocation_preimage;
             }
         </script>
@@ -608,7 +830,7 @@
                 var sigflag = tx_funding_pauls_sig.substring( tx_funding_pauls_sig.length - 2 );
                 if ( sigflag != "01" ) return alert( "tx_funding sig was not good due to bad sigflag! Aborting" );
                 var sig_is_good = await nobleSecp256k1.verify( tx_funding_pauls_sig.substring( 0, tx_funding_pauls_sig.length - 2 ), bytesToHex( sighash ), pauls_key );
-                if ( !sig_is_good ) return alert( `tx_funding sig was not good due to not validating! Aborting` );
+                if ( !sig_is_good ) return alert( "tx_funding sig was not good due to not validating! Aborting" );
                 tx_funding_txdata_vicky.vin[ 0 ].witness = [ 0, tx_funding_pauls_sig, tx_funding_vickys_sig_vicky, tx_funding_script ];
                 var tx_funding_txhex_vicky = tapscript.Tx.encode( tx_funding_txdata_vicky ).hex;
                 console.log( "prefunding_txhex:", prefunding_txhex );
@@ -670,7 +892,7 @@
                 //the following sig should move the money from the refund address to vicky
                 var tx_refund_pauls_sig = pauls_sigs[ 2 ];
                 var sighash = tapscript.Signer.taproot.hash( tx_refund_txdata_vicky, 0, { extension: tapscript.Tap.encodeScript( refund_scripts[ 1 ] ) } );
-                if ( tx_refund_pauls_sig.length > 128 ) return alert( `tx_refund sig was not good due to bad sigflag! Aborting.` );
+                if ( tx_refund_pauls_sig.length > 128 ) return alert( "tx_refund sig was not good due to bad sigflag! Aborting." );
                 var sig_is_good = await nobleSecp256k1.schnorr.verify( tx_refund_pauls_sig, bytesToHex( sighash ), pauls_key.substring( 2 ) );
                 if ( !sig_is_good ) return alert( "tx_refund sig was not good! Aborting" );
                 tx_refund_txdata_vicky.vin[ 0 ].witness = [ tx_refund_vickys_sig, tx_refund_pauls_sig, refund_scripts[ 1 ], refund_cblock ];
