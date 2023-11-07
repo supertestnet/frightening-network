@@ -27,7 +27,7 @@ If you can connect it to your own regtest node the following things work:
 - and then force close the channel. Also,
 - second layer payments are compatible with the "real" lightning network, so you can do stuff like:
 - have the first user send the second user a payment only if the second user pays a "real" lightning invoice
-- have the second user only if they do a submarine swap
+- or have the first user "accept" a real lightning payment via the second user, who gets to settle the "real" lightning payment only if they forward an equal amount to the first user
 
 # What doesn't work?
 
