@@ -51,11 +51,42 @@ An important aspect of the frightening network is that message types are indicat
 4. Unused
 5. Paul sends Vicky info requesting a payment. Includes a payment hash.
 6. Vicky sends Paul info requesting a payment. Includes a payment hash.
+7. Unused
+8. Unused
+9. Unused
 10. Vicky sends Paul info intiating a state change. Includes a new publication hash, a new revocation hash, and an amount.
+11. Unused
+12. Unused
+13. Unused
+14. Unused
 15. Paul sends Vicky info advancing the state change. Includes a new publication hash, a new revocation hash, and a bitcoin address where the amount should be sent if the transaction ends up on the base layer.
+16. Unused
+17. Unused
+18. Unused
+19. Unused
 20. Vicky sends Paul info advancing the state change. Includes 3 signatures.
+21. Unused
+22. Unused
+23. Unused
+24. Unused
 25. Paul sends Vicky info finalizing the state change. Includes 3 signatures.
+26. Unused
+27. Unused
+28. Unused
+29. Unused
 30. Vicky sends Paul info revoking the old state. Includes a revocation preimage.
+31. Unused
+32. Unused
+33. Unused
+34. Unused
 35. Paul sends Vicky info revoking the old state. Includes a revocation preimage.
+36. Unused
+37. Unused
+38. Unused
+39. Unused
 40. Paul sends Vicky info to prompt Vicky to initiate another state change to resolve an outstanding htlc that pays Paul. Includes a payment preimage.
+41. Unused
+42. Unused
+43. Unused
+44. Unused
 45. Vicky sends Paul info to prompt him to expect another state change to resolve an outstanding htlc that pays Vicky. Includes a payment preimage.
