@@ -34,6 +34,8 @@ If you can connect it to your own regtest node the following things work:
 - Neither party detects cheating attempts
 - cooperative closures don't work
 - user balances are not yet displayed
-- there are no buttons for doing any of the stuff listed in the section on stuff that works
+- multiple channels don't work
+- channel history isn't saved so don't refresh the page
+- there are no buttons for doing anything listed in the section on stuff that works
 
 Due to the last issue, to use this app you sort of have to sift through the source code and identify some esoteric commands. But it's all good, I'm just throwing this stuff up on github early so people can see what I'm working on in the open. Stay tuned for more.
