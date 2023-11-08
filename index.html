@@ -83,7 +83,6 @@
                     var transitioning_to = paul_channels[ channel_identifier ][ "old_states" ].length;
                     var msgnum = 6;
                     var msg_to_sign = `${channel_identifier}${transitioning_to}${msgnum}${pmthash}`;
-                    console.log( 0, msg_to_sign, pmthash, vickys_data );
                     var msghash = await sha256( msg_to_sign );
                     var sig = vickys_data[ 2 ];
                     var sig_is_valid = await nobleSecp256k1.verify( sig, msghash, vickys_key );
@@ -119,11 +118,9 @@
                     var transitioning_to = paul_channels[ channel_identifier ][ "old_states" ].length;
                     var msgnum = 45;
                     var msg_to_sign = `${channel_identifier}${transitioning_to}${msgnum}${preimage}`;
-                    console.log( "msg_to_sign:", msg_to_sign, "preimage:", preimage, "vickys_info:", vickys_info );
                     var msghash = await sha256( msg_to_sign );
                     var sig = vickys_info[ 2 ];
                     var sig_is_valid = await nobleSecp256k1.verify( sig, msghash, vickys_key );
-                    console.log( msg_to_sign, sig, msghash, vickys_key, sig_is_valid );
                     //todo: automate the force close
                     if ( !sig_is_valid ) return alert( `Something went wrong with the preimage! Time to force close` );
                 }
