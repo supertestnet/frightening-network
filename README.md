@@ -20,11 +20,11 @@ Most of the stuff that happens in the current version happens in the browser con
 # Does any of it work right now?
 
 If you can connect it to your own regtest node the following things work:
-- two users can create a channel
-- fund it
+- two users can create one or more channels
+- fund them
 - create commitment transactions
 - send as many second layer payments as they like to and from one another
-- and then force close the channel. Also,
+- and then force close any channel. Also,
 - second layer payments are compatible with the "real" lightning network, so you can do stuff like:
 - have the first user send the second user a payment only if the second user pays a real lightning invoice
 - have the first user "accept" a real lightning payment via the second user, who gets to settle the real lightning payment only if they forward an equal amount to the first user
@@ -34,7 +34,6 @@ If you can connect it to your own regtest node the following things work:
 - neither party detects cheating attempts [though they do have justice transactions ready to broadcast if you manually detect a cheating attempt]
 - cooperative closures don't work
 - user balances are not yet displayed
-- multiple channels don't work
 - channel history isn't saved so don't refresh the page
 - there are no buttons for doing anything listed in the section on stuff that works
 
