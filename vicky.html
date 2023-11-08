@@ -71,24 +71,69 @@
             var getRand = size => bytesToHex(crypto.getRandomValues(new Uint8Array(size)));
             var changeStateWithHtlc = async () => {
                 var am_sending = confirm( `Click ok if you want to send Paul money (in which case you must pass in the pmthash) or click cancel if you want Paul to send you money` );
-                console.log( "I am sending, right?", am_sending );
+                var channel_identifier = "first_channel";
+                var privkey = vicky_channels[ channel_identifier ][ "privkey" ];
                 if ( !am_sending ) {
                     var preimage = getRand( 32 );
                     var pmthash = await sha256( hexToBytes( preimage ) );
-                    console.log( "give this pmthash to paul:", pmthash );
+                    var transitioning_to = vicky_channels[ channel_identifier ][ "old_states" ].length;
+                    var msgnum = 6;
+                    var msg_to_sign = `${channel_identifier}${transitioning_to}${msgnum}${pmthash}`;
+                    var msghash = await sha256( msg_to_sign );
+                    var sig = await nobleSecp256k1.sign( msghash, privkey );
+                    console.log( "give this to Paul:", JSON.stringify( [ msgnum, channel_identifier, sig, pmthash ] ) );
+                    alert( `Give the data in your console to Paul` );
                     var how_much_msg = `How much money (in sats) do you want Paul to send to you?`;
+                    var amt = prompt( how_much_msg );
+                    amt = Number( amt );
+                    var conf = true;
                 } else {
-                    var pmthash = prompt( `Enter the pmthash given to you by Paul` );
-                    var how_much_msg = `How much money (in sats) do you want to send to Paul? (Must be less than ${vicky_db[ "balance" ][ "local" ]} sats)`;
+                    var pauls_data = prompt( `enter the data from Paul` );
+                    pauls_data = JSON.parse( pauls_data );
+                    var pmthash = pauls_data[ 3 ];
+                    var amt = pauls_data[ 4 ];
+                    var channel_identifier = pauls_data[ 1 ];
+                    var pauls_key = vicky_channels[ channel_identifier ][ "pauls_key" ];
+                    if ( !( "old_states" in vicky_channels[ channel_identifier ] ) ) vicky_channels[ channel_identifier ][ "old_states" ] = [];
+                    var transitioning_to = vicky_channels[ channel_identifier ][ "old_states" ].length;
+                    var msgnum = 5;
+                    var msg_to_sign = `${channel_identifier}${transitioning_to}${msgnum}${pmthash}${amt}`;
+                    var msghash = await sha256( msg_to_sign );
+                    var sig = pauls_data[ 2 ];
+                    var sig_is_valid = await nobleSecp256k1.verify( sig, msghash, pauls_key );
+                    if ( !sig_is_valid ) return;
+                    var conf = confirm( `Do you want to send Paul ${amt} sats?` );
                 }
-                var amt = prompt( how_much_msg );
-                amt = Number( amt );
+                if ( !conf ) return;
                 await changeState( pmthash, "", am_sending, amt );
-                if ( am_sending ) var preimage = prompt( `enter a preimage from Paul` );
-                else console.log( `send this preimage to Paul: ${preimage}` );
+                if ( am_sending ) {
+                    var pauls_info = prompt( `enter a preimage from Paul` );
+                    pauls_info = JSON.parse( pauls_info );
+                    var preimage = pauls_info[ 3 ];
+                    var channel_identifier = pauls_info[ 1 ];
+                    var pauls_key = vicky_channels[ channel_identifier ][ "pauls_key" ];
+                    if ( !( "old_states" in vicky_channels[ channel_identifier ] ) ) vicky_channels[ channel_identifier ][ "old_states" ] = [];
+                    var transitioning_to = vicky_channels[ channel_identifier ][ "old_states" ].length;
+                    var msgnum = 40;
+                    var msg_to_sign = `${channel_identifier}${transitioning_to}${msgnum}${preimage}`;
+                    var msghash = await sha256( msg_to_sign );
+                    var sig = pauls_info[ 2 ];
+                    var sig_is_valid = await nobleSecp256k1.verify( sig, msghash, pauls_key );
+                    //todo: automate the force close
+                    if ( !sig_is_valid ) return alert( `Something went wrong with the preimage! Time to force close` );
+                } else {
+                    var transitioning_to = vicky_channels[ channel_identifier ][ "old_states" ].length;
+                    var msgnum = 45;
+                    var msg_to_sign = `${channel_identifier}${transitioning_to}${msgnum}${preimage}`;
+                    var msghash = await sha256( msg_to_sign );
+                    var sig = await nobleSecp256k1.sign( msghash, privkey );
+                    var sig_is_valid = await nobleSecp256k1.verify( sig, msghash, vicky_channels[ channel_identifier ][ "vickys_key" ] );
+                    console.log( `send this preimage to Paul: ${JSON.stringify( [ msgnum, channel_identifier, sig, preimage ] )}` );
+                    alert( `Send the data in your console to Paul` );
+                }
                 var resolve_htlc = true;
                 var real_pmthash = await sha256( hexToBytes( preimage ) );
-                var claimed_pmthash = vicky_db[ "force_close_txs" ][ "pmthash" ];
+                var claimed_pmthash = vicky_channels[ "first_channel" ][ "force_close_txs" ][ "pmthash" ];
                 //todo: automate the force close
                 if ( real_pmthash != claimed_pmthash ) return alert( `Oh no! Your counterparty gave you a bad preimage! Time to force close!` );
                 changeState( "", preimage, am_sending, "", resolve_htlc );
@@ -136,16 +181,17 @@
                 var tx = tapscript.Tx.decode( txhex );
                 var witness_stack = tx.vin[ 0 ].witness;
                 var pauls_publication_preimage = witness_stack[ 3 ];
-                // console.log( "witness stack:", witness_stack );
                 var pauls_revocation_preimage = null;
                 var vickys_publication_preimage = null;
                 var vickys_revocation_preimage = null;
-                var vickys_address = vicky_db[ "vickys_address" ];
-                var pauls_key = vicky_db[ "pauls_key" ];
+                var vickys_address = vicky_channels[ "first_channel" ][ "vickys_address" ];
+                var pauls_key = vicky_channels[ "first_channel" ][ "pauls_key" ];
+                var vickys_key = vicky_channels[ "first_channel" ][ "vickys_key" ];
+                var privkey = vicky_channels[ "first_channel" ][ "privkey" ];
                 //todo: also check if this is the to_reveal tx, in which case
                 //you don't need to look for a preimage, just prepare a justice
                 //tx and broadcast it after waiting 10 blocks
-                vicky_db[ "old_states" ].every( ( item, index ) => {
+                vicky_channels[ "first_channel" ][ "old_states" ].every( ( item, index ) => {
                     var old_state_txid = item[ "other_partys_to_delay_txid" ];
                     if ( old_state_txid == txid ) {
                         if ( "pauls_revocation_preimage" in item ) pauls_revocation_preimage = item[ "pauls_revocation_preimage" ];
@@ -175,36 +221,50 @@
                     [ 0, pauls_key.substring( 2 ), 'OP_CHECKSIGADD', vickys_key.substring( 2 ), 'OP_CHECKSIGADD', 2, 'OP_EQUALVERIFY', 1 * 7, 'OP_CHECKSEQUENCEVERIFY', 'OP_0NOTEQUAL' ],
                     [ 'OP_RIPEMD160', rmd160( hexToBytes( pauls_publication_preimage ) ), 'OP_EQUALVERIFY', 'OP_RIPEMD160', rmd160( hexToBytes( pauls_revocation_preimage ) ), 'OP_EQUALVERIFY', vickys_key.substring( 2 ), 'OP_CHECKSIG' ],
                 ];
-                console.log( "justice_scripts:" );
-                console.log( JSON.stringify( justice_scripts ) );
                 var justice_tree = justice_scripts.map( s => tapscript.Tap.encodeScript( s ) );
                 var [ justice_tpubkey, justice_cblock ] = tapscript.Tap.getPubKey( "ab".repeat( 32 ), { tree: justice_tree, target: tapscript.Tap.encodeScript( justice_scripts[ 2 ] ) });
                 var sig = tapscript.Signer.taproot.sign( privkey, justice_txdata, 0, { extension: tapscript.Tap.encodeScript( justice_scripts[ 2 ] ) });
                 //the order of the witness stack is: publication preimage furthest "forward", revocation preimage next "back", sig furthest back
                 justice_txdata.vin[ 0 ].witness = [ sig.hex, pauls_revocation_preimage, pauls_publication_preimage, justice_scripts[ 2 ], justice_cblock ];
                 var justice_txhex = tapscript.Tx.encode( justice_txdata ).hex;
-                console.log( "justice_txhex:", justice_txhex );
             }
             var changeState = async ( pmthash, preimage, am_sending, amt, resolve_htlc ) => {
+                var vickys_key = vicky_channels[ "first_channel" ][ "vickys_key" ];
+                var privkey = vicky_channels[ "first_channel" ][ "privkey" ];
                 if ( !resolve_htlc ) {
-                    if ( am_sending && amt >= vicky_db[ "balance" ][ "local" ] ) return;
-                    if ( am_sending ) var amount_for_paul = vicky_db[ "balance" ][ "remote" ] + amt;
-                    else var amount_for_paul = vicky_db[ "balance" ][ "remote" ] - amt;
+                    if ( am_sending && amt >= vicky_channels[ "first_channel" ][ "balance" ][ "local" ] ) return;
+                    if ( am_sending ) var amount_for_paul = vicky_channels[ "first_channel" ][ "balance" ][ "remote" ] + amt;
+                    else var amount_for_paul = vicky_channels[ "first_channel" ][ "balance" ][ "remote" ] - amt;
                 } else {
-                    var amount_for_paul = vicky_db[ "tx_funding_amt" ] + 500 - vicky_db[ "balance" ][ "reserve" ] - vicky_db[ "balance" ][ "local" ];
+                    var amount_for_paul = vicky_channels[ "first_channel" ][ "tx_funding_amt" ] + 500 - vicky_channels[ "first_channel" ][ "balance" ][ "reserve" ] - vicky_channels[ "first_channel" ][ "balance" ][ "local" ];
                 }
                 var vickys_new_publication_preimage = bytesToHex( nobleSecp256k1.utils.randomPrivateKey() ).substring( 0, 32 );
                 var vickys_new_publication_hash = rmd160( hexToBytes( vickys_new_publication_preimage ) );
                 var vickys_new_revocation_preimage = bytesToHex( nobleSecp256k1.utils.randomPrivateKey() ).substring( 0, 32 );
                 var vickys_new_revocation_hash = rmd160( hexToBytes( vickys_new_revocation_preimage ) );
-                console.log( `give this data to Paul and get his pub & rev hashes: ${JSON.stringify([vickys_new_publication_hash, vickys_new_revocation_hash, amount_for_paul])}` );
+                var channel_identifier = "first_channel";
+                var transitioning_to = vicky_channels[ channel_identifier ][ "old_states" ].length + 1;
+                var msgnum = 10;
+                var msg_to_sign = `${channel_identifier}${transitioning_to}${msgnum}${vickys_new_publication_hash}${vickys_new_revocation_hash}${amount_for_paul}`;
+                var msghash = await sha256( msg_to_sign );
+                var sig = await nobleSecp256k1.sign( msghash, privkey );
+                console.log( `give this data to Paul and get his pub & rev hashes: ${ JSON.stringify( [ msgnum, channel_identifier, sig, vickys_new_publication_hash, vickys_new_revocation_hash, amount_for_paul ] ) }` );
                 alert( `send the data in your console to Paul` );
                 var pauls_data = prompt( "enter Paul's new pub & rev hashes & his btc address" );
                 pauls_data = JSON.parse( pauls_data );
-                var pauls_new_publication_hash = pauls_data[ 0 ];
-                var pauls_new_revocation_hash = pauls_data[ 1 ];
-                var pauls_address = pauls_data[ 2 ];
-                var pauls_key = vicky_db[ "pauls_key" ];
+                var pauls_new_publication_hash = pauls_data[ 3 ];
+                var pauls_new_revocation_hash = pauls_data[ 4 ];
+                var pauls_address = pauls_data[ 5 ];
+                var channel_identifier = pauls_data[ 1 ];
+                var pauls_key = vicky_channels[ channel_identifier ][ "pauls_key" ];
+                var transitioning_to = vicky_channels[ channel_identifier ][ "old_states" ].length + 1;
+                var msgnum = 15;
+                var msg_to_sign = `${channel_identifier}${transitioning_to}${msgnum}${pauls_new_publication_hash}${pauls_new_revocation_hash}${pauls_address}`;
+                var msghash = await sha256( msg_to_sign );
+                var sig = pauls_data[ 2 ];
+                var sig_is_valid = await nobleSecp256k1.verify( sig, msghash, pauls_key );
+                //todo: automate the force close
+                if ( !sig_is_valid ) return alert( `Something went wrong with message 15! Time to force close!` );
                 var new_post_funding_script_paul = [
                     'OP_RIPEMD160',
                     pauls_new_publication_hash,
@@ -245,8 +305,8 @@
                 ];
                 // var tx_funding_script = [ 2, pauls_key, vickys_key, 2, 'OP_CHECKMULTISIG' ];
                 var new_post_funding_address_vicky = tapscript.Address.p2wsh.fromScript( new_post_funding_script_vicky, "regtest" );
-                vicky_db[ "pauls_address" ] = pauls_address;
-                var pauls_key = vicky_db[ "pauls_key" ];
+                vicky_channels[ "first_channel" ][ "pauls_address" ] = pauls_address;
+                var pauls_key = vicky_channels[ "first_channel" ][ "pauls_key" ];
                 var new_tx_commit_scripts = [
                     [ 'OP_RIPEMD160', vickys_new_publication_hash, 'OP_EQUALVERIFY', 'OP_RIPEMD160', vickys_new_revocation_hash, 'OP_EQUALVERIFY', pauls_key.substring( 2 ), 'OP_CHECKSIG' ],
                     [ 0, pauls_key.substring( 2 ), 'OP_CHECKSIGADD', vickys_key.substring( 2 ), 'OP_CHECKSIGADD', 2, 'OP_EQUALVERIFY', 1 * 7, 'OP_CHECKSEQUENCEVERIFY', 'OP_0NOTEQUAL' ],
@@ -256,13 +316,12 @@
                 var [ new_tx_commit_tpubkey, cblock ] = tapscript.Tap.getPubKey( "ab".repeat( 32 ), { tree: new_tx_commit_tree, target: tapscript.Tap.encodeScript( new_tx_commit_scripts[ 1 ] ) });
                 var new_tx_commit_cblock = cblock;
                 var new_tx_commit_address = tapscript.Address.p2tr.fromPubKey( new_tx_commit_tpubkey, 'regtest' );
-                console.log( "new_tx_commit_address:", new_tx_commit_address );
-                var prev_tx_funding = tapscript.Tx.decode( vicky_db[ "force_close_txs" ][ "to_reveal" ] );
+                var prev_tx_funding = tapscript.Tx.decode( vicky_channels[ "first_channel" ][ "force_close_txs" ][ "to_reveal" ] );
                 var tx_funding_txid = prev_tx_funding[ "vin" ][ 0 ][ "txid" ];
                 var tx_funding_vout = prev_tx_funding[ "vin" ][ 0 ][ "vout" ];
-                var tx_funding_amt = vicky_db[ "tx_funding_amt" ];
-                var tx_funding_address = vicky_db[ "tx_funding_address" ];
-                var tx_funding_script = vicky_db[ "tx_funding_script" ];
+                var tx_funding_amt = vicky_channels[ "first_channel" ][ "tx_funding_amt" ];
+                var tx_funding_address = vicky_channels[ "first_channel" ][ "tx_funding_address" ];
+                var tx_funding_script = vicky_channels[ "first_channel" ][ "tx_funding_script" ];
                 var new_tx_funding_txdata = tapscript.Tx.create({
                   vin  : [{
                     txid: tx_funding_txid,
@@ -277,14 +336,10 @@
                     scriptPubKey: tapscript.Address.toScriptPubKey( new_post_funding_address_paul )
                   }]
                 });
-                console.log( "new_tx_funding_txdata:" );
-                console.log( JSON.stringify( new_tx_funding_txdata ) );
                 var new_tx_funding_vickys_sig = tapscript.Signer.segwit.sign( privkey, new_tx_funding_txdata, 0, { script: tx_funding_script });
                 var new_tx_funding_txhex = tapscript.Tx.encode( new_tx_funding_txdata ).hex;
-                console.log( "new_tx_funding_txhex:", new_tx_funding_txhex );
                 var new_post_funding_txid = tapscript.Tx.util.getTxid( new_tx_funding_txhex );
                 var other_partys_to_reveal_txid = new_post_funding_txid;
-                console.log( "new_post_funding_txid:", new_post_funding_txid );
                 var new_post_funding_vout = 0;
                 var new_post_funding_amt = tx_funding_amt - 500;
                 var new_post_funding_txdata = tapscript.Tx.create({
@@ -301,16 +356,13 @@
                     scriptPubKey: tapscript.Address.toScriptPubKey( new_tx_commit_address )
                   }]
                 });
-                console.log( "new_post_funding_txdata:" );
-                console.log( JSON.stringify( new_post_funding_txdata ) );
                 var new_post_funding_vickys_sig = tapscript.Signer.segwit.sign( privkey, new_post_funding_txdata, 0, { script: new_post_funding_script_paul });
                 var new_post_funding_txhex = tapscript.Tx.encode( new_post_funding_txdata ).hex;
                 var new_tx_commit_txid = tapscript.Tx.util.getTxid( new_post_funding_txhex );
                 var other_partys_to_delay_txid = new_tx_commit_txid;
-                console.log( "new_tx_commit_txid:", new_tx_commit_txid );
                 var new_tx_commit_vout = 0;
                 var new_tx_commit_amt = new_post_funding_amt - 500;
-                var vickys_address = vicky_db[ "vickys_address" ];
+                var vickys_address = vicky_channels[ "first_channel" ][ "vickys_address" ];
                 var new_tx_commit_txdata = tapscript.Tx.create({
                   vin  : [{
                     txid: new_tx_commit_txid,
@@ -405,7 +457,13 @@
                 }
                 var final_amt = new_tx_commit_amt - amount_for_paul - 500;
                 var new_tx_commit_vickys_sig = tapscript.Signer.taproot.sign( privkey, new_tx_commit_txdata, 0, { extension: tapscript.Tap.encodeScript( new_tx_commit_scripts[ 1 ] ) });
-                console.log( `give these three sigs to Paul: ${JSON.stringify( [bytesToHex( new_tx_funding_vickys_sig ), bytesToHex( new_post_funding_vickys_sig ), bytesToHex( new_tx_commit_vickys_sig )] )}` );
+                var channel_identifier = "first_channel";
+                var transitioning_to = vicky_channels[ channel_identifier ][ "old_states" ].length + 1;
+                var msgnum = 20;
+                var msg_to_sign = `${channel_identifier}${transitioning_to}${msgnum}${new_tx_funding_vickys_sig.hex}${new_post_funding_vickys_sig.hex}${new_tx_commit_vickys_sig.hex}`;
+                var msghash = await sha256( msg_to_sign );
+                var sig = await nobleSecp256k1.sign( msghash, privkey );
+                console.log( `give these three sigs to Paul: ${JSON.stringify( [ msgnum, channel_identifier, sig, new_tx_funding_vickys_sig.hex, new_post_funding_vickys_sig.hex, new_tx_commit_vickys_sig.hex ] )}` );
                 alert( `send the data in your console to Paul` );
                 //versions for Vicky
                 var new_tx_funding_txdata = tapscript.Tx.create({
@@ -422,13 +480,9 @@
                     scriptPubKey: tapscript.Address.toScriptPubKey( new_post_funding_address_vicky )
                   }]
                 });
-                console.log( "new_tx_funding_txdata:" );
-                console.log( JSON.stringify( new_tx_funding_txdata ) );
                 var new_tx_funding_vickys_sig = tapscript.Signer.segwit.sign( privkey, new_tx_funding_txdata, 0, { script: tx_funding_script });
                 var new_tx_funding_txhex = tapscript.Tx.encode( new_tx_funding_txdata ).hex;
-                console.log( "new_tx_funding_txhex:", new_tx_funding_txhex );
                 var new_post_funding_txid = tapscript.Tx.util.getTxid( new_tx_funding_txhex );
-                console.log( "new_post_funding_txid:", new_post_funding_txid );
                 var new_post_funding_vout = 0;
                 var new_post_funding_amt = tx_funding_amt - 500;
                 var new_post_funding_txdata = tapscript.Tx.create({
@@ -445,15 +499,12 @@
                     scriptPubKey: tapscript.Address.toScriptPubKey( new_tx_commit_address )
                   }]
                 });
-                console.log( "new_post_funding_txdata:" );
-                console.log( JSON.stringify( new_post_funding_txdata ) );
                 var new_post_funding_vickys_sig = tapscript.Signer.segwit.sign( privkey, new_post_funding_txdata, 0, { script: new_post_funding_script_vicky });
                 var new_post_funding_txhex = tapscript.Tx.encode( new_post_funding_txdata ).hex;
                 var new_tx_commit_txid = tapscript.Tx.util.getTxid( new_post_funding_txhex );
-                console.log( "new_tx_commit_txid:", new_tx_commit_txid );
                 var new_tx_commit_vout = 0;
                 var new_tx_commit_amt = new_post_funding_amt - 500;
-                var vickys_address = vicky_db[ "vickys_address" ];
+                var vickys_address = vicky_channels[ "first_channel" ][ "vickys_address" ];
                 var new_tx_commit_txdata = tapscript.Tx.create({
                   vin  : [{
                     txid: new_tx_commit_txid,
@@ -549,34 +600,44 @@
                 var new_tx_commit_vickys_sig = tapscript.Signer.taproot.sign( privkey, new_tx_commit_txdata, 0, { extension: tapscript.Tap.encodeScript( new_tx_commit_scripts[ 1 ] ) });
                 var pauls_data = prompt( "enter three sigs from Paul" );
                 pauls_data = JSON.parse( pauls_data );
+                var channel_identifier = pauls_data[ 1 ];
+                var pauls_key = vicky_channels[ channel_identifier ][ "pauls_key" ];
+                var transitioning_to = vicky_channels[ channel_identifier ][ "old_states" ].length + 1;
+                var msgnum = 25;
+                var msg_to_sign = `${channel_identifier}${transitioning_to}${msgnum}${pauls_data[ 3 ]}${pauls_data[ 4 ]}${pauls_data[ 5 ]}`;
+                var msghash = await sha256( msg_to_sign );
+                var sig = pauls_data[ 2 ];
+                var sig_is_valid = await nobleSecp256k1.verify( sig, msghash, pauls_key );
+                //todo: automate the force close
+                if ( !sig_is_valid ) return alert( `Something went wrong with message 25! Time to force close!` );
                 //the following sig should move the money from the funding address to the new_post_funding address
-                var new_tx_funding_pauls_sig = pauls_data[ 0 ];
+                var new_tx_funding_pauls_sig = pauls_data[ 3 ];
                 var sighash = tapscript.Signer.segwit.hash( new_tx_funding_txdata, 0, { script: tx_funding_script } );
                 var sigflag = new_tx_funding_pauls_sig.substring( new_tx_funding_pauls_sig.length - 2 );
-                if ( sigflag != "01" ) return alert( `new_tx_funding sig was not good! Aborting, broadcast these transactions:\n\n${vicky_db[ "force_close_txs" ][ "to_reveal" ]}\n\n${vicky_db[ "force_close_txs" ][ "to_delay" ]}\n\nThen wait 1008 blocks, then broadcast this transaction:\n\n${vicky_db[ "force_close_txs" ][ "final_tx" ]}` );
+                if ( sigflag != "01" ) return alert( `new_tx_funding sig was not good! Aborting, broadcast these transactions:\n\n${vicky_channels[ "first_channel" ][ "force_close_txs" ][ "to_reveal" ]}\n\n${vicky_channels[ "first_channel" ][ "force_close_txs" ][ "to_delay" ]}\n\nThen wait 1008 blocks, then broadcast this transaction:\n\n${vicky_channels[ "first_channel" ][ "force_close_txs" ][ "final_tx" ]}` );
                 var sig_is_good = await nobleSecp256k1.verify( new_tx_funding_pauls_sig.substring( 0, new_tx_funding_pauls_sig.length - 2 ), bytesToHex( sighash ), pauls_key );
-                if ( !sig_is_good ) return alert( `new_tx_funding sig was not good! Aborting, broadcast these transactions:\n\n${vicky_db[ "force_close_txs" ][ "to_reveal" ]}\n\n${vicky_db[ "force_close_txs" ][ "to_delay" ]}\n\nThen wait 1008 blocks, then broadcast this transaction:\n\n${vicky_db[ "force_close_txs" ][ "final_tx" ]}` );
+                if ( !sig_is_good ) return alert( `new_tx_funding sig was not good! Aborting, broadcast these transactions:\n\n${vicky_channels[ "first_channel" ][ "force_close_txs" ][ "to_reveal" ]}\n\n${vicky_channels[ "first_channel" ][ "force_close_txs" ][ "to_delay" ]}\n\nThen wait 1008 blocks, then broadcast this transaction:\n\n${vicky_channels[ "first_channel" ][ "force_close_txs" ][ "final_tx" ]}` );
                 new_tx_funding_txdata.vin[ 0 ].witness = [ 0, new_tx_funding_pauls_sig, new_tx_funding_vickys_sig, tx_funding_script ];
                 var new_tx_funding_txhex = tapscript.Tx.encode( new_tx_funding_txdata ).hex;
                 //the following sig should move the money from the new_post_funding address to the new_tx_commit address
-                var new_post_funding_pauls_sig = pauls_data[ 1 ];
+                var new_post_funding_pauls_sig = pauls_data[ 4 ];
                 var sighash = tapscript.Signer.segwit.hash( new_post_funding_txdata, 0, { script: new_post_funding_script_vicky } );
                 var sigflag = new_post_funding_pauls_sig.substring( new_post_funding_pauls_sig.length - 2 );
-                if ( sigflag != "01" ) return alert( `new_post_funding sig was not good due to bad sigflag! Aborting, broadcast these transactions:\n\n${vicky_db[ "force_close_txs" ][ "to_reveal" ]}\n\n${vicky_db[ "force_close_txs" ][ "to_delay" ]}\n\nThen wait 1008 blocks, then broadcast this transaction:\n\n${vicky_db[ "force_close_txs" ][ "final_tx" ]}` );
+                if ( sigflag != "01" ) return alert( `new_post_funding sig was not good due to bad sigflag! Aborting, broadcast these transactions:\n\n${vicky_channels[ "first_channel" ][ "force_close_txs" ][ "to_reveal" ]}\n\n${vicky_channels[ "first_channel" ][ "force_close_txs" ][ "to_delay" ]}\n\nThen wait 1008 blocks, then broadcast this transaction:\n\n${vicky_channels[ "first_channel" ][ "force_close_txs" ][ "final_tx" ]}` );
                 var sig_is_good = await nobleSecp256k1.verify( new_post_funding_pauls_sig.substring( 0, new_post_funding_pauls_sig.length - 2 ), bytesToHex( sighash ), pauls_key );
-                if ( !sig_is_good ) return alert( `new_post_funding sig was not good due to not validating! Aborting, broadcast these transactions:\n\n${vicky_db[ "force_close_txs" ][ "to_reveal" ]}\n\n${vicky_db[ "force_close_txs" ][ "to_delay" ]}\n\nThen wait 1008 blocks, then broadcast this transaction:\n\n${vicky_db[ "force_close_txs" ][ "final_tx" ]}` );
+                if ( !sig_is_good ) return alert( `new_post_funding sig was not good due to not validating! Aborting, broadcast these transactions:\n\n${vicky_channels[ "first_channel" ][ "force_close_txs" ][ "to_reveal" ]}\n\n${vicky_channels[ "first_channel" ][ "force_close_txs" ][ "to_delay" ]}\n\nThen wait 1008 blocks, then broadcast this transaction:\n\n${vicky_channels[ "first_channel" ][ "force_close_txs" ][ "final_tx" ]}` );
                 new_post_funding_txdata.vin[ 0 ].witness = [ 0, new_post_funding_pauls_sig, new_post_funding_vickys_sig, vickys_new_publication_preimage, new_post_funding_script_vicky ];
                 var new_post_funding_txhex = tapscript.Tx.encode( new_post_funding_txdata ).hex;
                 //the following sig should move the money from the new_tx_commit address to vicky
-                var new_tx_commit_pauls_sig = pauls_data[ 2 ];
+                var new_tx_commit_pauls_sig = pauls_data[ 5 ];
                 var sighash = tapscript.Signer.taproot.hash( new_tx_commit_txdata, 0, { extension: tapscript.Tap.encodeScript( new_tx_commit_scripts[ 1 ] ) } );
-                if ( new_tx_commit_pauls_sig.length > 128 ) return alert( `new_tx_commit sig was not good due to bad sigflag! Aborting, broadcast these transactions:\n\n${vicky_db[ "force_close_txs" ][ "to_reveal" ]}\n\n${vicky_db[ "force_close_txs" ][ "to_delay" ]}\n\nThen wait 1008 blocks, then broadcast this transaction:\n\n${vicky_db[ "force_close_txs" ][ "final_tx" ]}` );
+                if ( new_tx_commit_pauls_sig.length > 128 ) return alert( `new_tx_commit sig was not good due to bad sigflag! Aborting, broadcast these transactions:\n\n${vicky_channels[ "first_channel" ][ "force_close_txs" ][ "to_reveal" ]}\n\n${vicky_channels[ "first_channel" ][ "force_close_txs" ][ "to_delay" ]}\n\nThen wait 1008 blocks, then broadcast this transaction:\n\n${vicky_channels[ "first_channel" ][ "force_close_txs" ][ "final_tx" ]}` );
                 var sig_is_good = await nobleSecp256k1.schnorr.verify( new_tx_commit_pauls_sig, bytesToHex( sighash ), pauls_key.substring( 2 ) );
-                if ( !sig_is_good ) return alert( `new_tx_commit sig was not good! Aborting, broadcast these transactions:\n\n${vicky_db[ "force_close_txs" ][ "to_reveal" ]}\n\n${vicky_db[ "force_close_txs" ][ "to_delay" ]}\n\nThen wait 1008 blocks, then broadcast this transaction:\n\n${vicky_db[ "force_close_txs" ][ "final_tx" ]}` );
+                if ( !sig_is_good ) return alert( `new_tx_commit sig was not good! Aborting, broadcast these transactions:\n\n${vicky_channels[ "first_channel" ][ "force_close_txs" ][ "to_reveal" ]}\n\n${vicky_channels[ "first_channel" ][ "force_close_txs" ][ "to_delay" ]}\n\nThen wait 1008 blocks, then broadcast this transaction:\n\n${vicky_channels[ "first_channel" ][ "force_close_txs" ][ "final_tx" ]}` );
                 new_tx_commit_txdata.vin[ 0 ].witness = [ new_tx_commit_vickys_sig, new_tx_commit_pauls_sig, new_tx_commit_scripts[ 1 ], new_tx_commit_cblock ];
                 var new_tx_commit_txhex = tapscript.Tx.encode( new_tx_commit_txdata ).hex;
-                var old_state = vicky_db[ "force_close_txs" ];
-                vicky_db[ "old_states" ].push( old_state );
+                var old_state = vicky_channels[ "first_channel" ][ "force_close_txs" ];
+                vicky_channels[ "first_channel" ][ "old_states" ].push( old_state );
                 var new_state = {
                     other_partys_to_reveal_txid,
                     other_partys_to_delay_txid,
@@ -594,48 +655,57 @@
                 if ( pmthash && htlc_txhex_if_vicky_received_and_vicky_broadcasted ) new_state[ "htlc_txhex_if_vicky_received_and_vicky_broadcasted" ] = htlc_txhex_if_vicky_received_and_vicky_broadcasted;
                 if ( pmthash ) new_state[ "pmthash" ] = pmthash;
                 if ( preimage ) new_state[ "preimage" ] = preimage;
-                vicky_db[ "force_close_txs" ] = new_state;
-                var tx = tapscript.Tx.decode( vicky_db[ "force_close_txs" ][ "to_reveal" ] );
+                vicky_channels[ "first_channel" ][ "force_close_txs" ] = new_state;
+                var tx = tapscript.Tx.decode( vicky_channels[ "first_channel" ][ "force_close_txs" ][ "to_reveal" ] );
                 var vout_sats = Number( tx.vout[ 0 ].value );
-                var fee = vicky_db[ "tx_funding_amt" ] - vout_sats;
-                var prefunding_amt = vicky_db[ "tx_funding_amt" ] + fee;
-                vicky_db[ "balance" ][ "reserve" ] = 2000;
-                if ( !( "remote" in vicky_db[ "balance" ] ) ) vicky_db[ "balance" ][ "remote" ] = 0;
-                vicky_db[ "balance" ][ "remote" ] = amount_for_paul;
-                vicky_db[ "balance" ][ "local" ] = vicky_db[ "tx_funding_amt" ] + 500 - 2000 - amount_for_paul;
-                console.log( `Send this revocation preimage to Paul and get his: ${vicky_db[ "old_states" ][ vicky_db[ "old_states" ].length - 1 ][ "vickys_revocation_preimage" ]}` );
-                alert( `Send the revocation preimage for state ${vicky_db[ "old_states" ].length - 1} to Paul (it's in your console)` );
-                var pauls_revocation_preimage = prompt( `Enter Paul's revocation preimage` );
-                var pauls_revocation_hash = vicky_db[ "old_states" ][ vicky_db[ "old_states" ].length - 1 ][ "pauls_revocation_hash" ];
-                if ( rmd160( hexToBytes( pauls_revocation_preimage ) ) != pauls_revocation_hash ) return alert( `Time to force close! Paul sent you a wrong revocation preimage! Broadcast these transactions:\n\n${vicky_db[ "force_close_txs" ][ "to_reveal" ]}\n\n${vicky_db[ "force_close_txs" ][ "to_delay" ]}\n\nThen wait 1008 blocks, then broadcast this transaction:\n\n${vicky_db[ "force_close_txs" ][ "final_tx" ]}` );
-                vicky_db[ "old_states" ][ vicky_db[ "old_states" ].length - 1 ][ "pauls_revocation_preimage" ] = pauls_revocation_preimage;
+                var fee = vicky_channels[ "first_channel" ][ "tx_funding_amt" ] - vout_sats;
+                var prefunding_amt = vicky_channels[ "first_channel" ][ "tx_funding_amt" ] + fee;
+                vicky_channels[ "first_channel" ][ "balance" ][ "reserve" ] = 2000;
+                if ( !( "remote" in vicky_channels[ "first_channel" ][ "balance" ] ) ) vicky_channels[ "first_channel" ][ "balance" ][ "remote" ] = 0;
+                vicky_channels[ "first_channel" ][ "balance" ][ "remote" ] = amount_for_paul;
+                vicky_channels[ "first_channel" ][ "balance" ][ "local" ] = vicky_channels[ "first_channel" ][ "tx_funding_amt" ] + 500 - 2000 - amount_for_paul;
+                var channel_identifier = "first_channel";
+                var transitioning_to = vicky_channels[ channel_identifier ][ "old_states" ].length;
+                var msgnum = 30;
+                var msg_to_sign = `${channel_identifier}${transitioning_to}${msgnum}${vicky_channels[ channel_identifier ][ "old_states" ][ vicky_channels[ channel_identifier ][ "old_states" ].length - 1 ][ "vickys_revocation_preimage" ]}`;
+                var msghash = await sha256( msg_to_sign );
+                var sig = await nobleSecp256k1.sign( msghash, privkey );
+                console.log( `Send this revocation preimage to Paul and get his: ${JSON.stringify( [ msgnum, channel_identifier, sig, vicky_channels[ channel_identifier ][ "old_states" ][ vicky_channels[ channel_identifier ][ "old_states" ].length - 1 ][ "vickys_revocation_preimage" ] ] )}` );
+                alert( `Send the revocation preimage for state ${vicky_channels[ channel_identifier ][ "old_states" ].length - 1} to Paul (it's in your console)` );
+                var pauls_data = prompt( `Enter Paul's revocation preimage` );
+                pauls_data = JSON.parse( pauls_data );
+                var channel_identifier = pauls_data[ 1 ];
+                var pauls_key = vicky_channels[ channel_identifier ][ "pauls_key" ];
+                var transitioning_to = vicky_channels[ channel_identifier ][ "old_states" ].length;
+                var msgnum = 35;
+                var msg_to_sign = `${channel_identifier}${transitioning_to}${msgnum}${pauls_data[ 3 ]}`;
+                var msghash = await sha256( msg_to_sign );
+                var sig = pauls_data[ 2 ];
+                var sig_is_valid = await nobleSecp256k1.verify( sig, msghash, pauls_key );
+                //todo: automate the force close
+                if ( !sig_is_valid ) return alert( `Something went wrong with message 35! Time to force close!` );
+                var pauls_revocation_preimage = pauls_data[ 3 ];
+                var pauls_revocation_hash = vicky_channels[ "first_channel" ][ "old_states" ][ vicky_channels[ "first_channel" ][ "old_states" ].length - 1 ][ "pauls_revocation_hash" ];
+                if ( rmd160( hexToBytes( pauls_revocation_preimage ) ) != pauls_revocation_hash ) return alert( `Time to force close! Paul sent you a wrong revocation preimage! Broadcast these transactions:\n\n${vicky_channels[ "first_channel" ][ "force_close_txs" ][ "to_reveal" ]}\n\n${vicky_channels[ "first_channel" ][ "force_close_txs" ][ "to_delay" ]}\n\nThen wait 1008 blocks, then broadcast this transaction:\n\n${vicky_channels[ "first_channel" ][ "force_close_txs" ][ "final_tx" ]}` );
+                vicky_channels[ "first_channel" ][ "old_states" ][ vicky_channels[ "first_channel" ][ "old_states" ].length - 1 ][ "pauls_revocation_preimage" ] = pauls_revocation_preimage;
             }
         </script>
     </head>
     <body>
         <h1>Hi Vicky</h1>
-        <div class="make_channel">
-            <p>Enter Paul's pubkey</p>
-            <p><input class="pauls_key"></p>
-            <p>Enter Paul's publication hash</p>
-            <p><input class="pauls_publication_hash"></p>
-            <p>Enter Paul's revocation hash</p>
-            <p><input class="pauls_revocation_hash"></p>
-            <p><button class="submit_pauls_key">Submit</button></p>
-        </div>
         <script>
-            var vicky_db = {}
-            //todo: get this address from elsewhere
-            var vickys_address = 'bcrt1q738hdjlatdx9xmg3679kwq9cwd7fa2c84my9zk';
-            var refund_cblock = null;
-            var privkey = bytesToHex( nobleSecp256k1.utils.randomPrivateKey() );
-            var vickys_key = nobleSecp256k1.getPublicKey( privkey, true );
-            var vickys_publication_preimage = bytesToHex( nobleSecp256k1.utils.randomPrivateKey() ).substring( 0, 32 );
-            var vickys_publication_hash = rmd160( hexToBytes( vickys_publication_preimage ) );
-            var vickys_revocation_preimage = bytesToHex( nobleSecp256k1.utils.randomPrivateKey() ).substring( 0, 32 );
-            var vickys_revocation_hash = rmd160( hexToBytes( vickys_revocation_preimage ) );
-            console.log( vickys_key );
-            $( '.submit_pauls_key' ).onclick = async () => {
+            var vicky_channels = {"first_channel": {}}
+            var makeChannel = async () => {
+                //todo: get this address from elsewhere
+                var vickys_address = 'bcrt1q738hdjlatdx9xmg3679kwq9cwd7fa2c84my9zk';
+                var refund_cblock = null;
+                var privkey = bytesToHex( nobleSecp256k1.utils.randomPrivateKey() );
+                var vickys_key = nobleSecp256k1.getPublicKey( privkey, true );
+                var vickys_publication_preimage = bytesToHex( nobleSecp256k1.utils.randomPrivateKey() ).substring( 0, 32 );
+                var vickys_publication_hash = rmd160( hexToBytes( vickys_publication_preimage ) );
+                var vickys_revocation_preimage = bytesToHex( nobleSecp256k1.utils.randomPrivateKey() ).substring( 0, 32 );
+                var vickys_revocation_hash = rmd160( hexToBytes( vickys_revocation_preimage ) );
+                console.log( vickys_key );
                 var prefunding_address = tapscript.Address.p2wpkh.fromPubKey( vickys_key, "regtest" );
                 console.log( "prefunding_address:", prefunding_address );
                 var prefunding_txid = prompt( "Send some money to the bitcoin address in your console and enter the txid of the transaction" );
@@ -653,10 +723,19 @@
                     vickys_address,
                     prefunding_address,
                 }
-                var pauls_key = $( '.pauls_key' ).value;
-                var pauls_publication_hash = $( '.pauls_publication_hash' ).value;
-                var pauls_revocation_hash = $( '.pauls_revocation_hash' ).value;
-                console.log( `send this to Paul: ${JSON.stringify( data_for_paul )}` );
+                var pauls_info = prompt( `enter the info from Paul` );
+                pauls_info = JSON.parse( pauls_info );
+                var pauls_key = pauls_info[ 3 ];
+                var pauls_publication_hash = pauls_info[ 4 ];
+                var pauls_revocation_hash = pauls_info[ 5 ];
+                var channel_identifier = pauls_info[ 1 ];
+                var transitioning_to = 0;
+                var msgnum = 0;
+                var msg_to_sign = `${channel_identifier}${transitioning_to}${msgnum}${pauls_key}${pauls_publication_hash}${pauls_revocation_hash}`;
+                var msghash = await sha256( msg_to_sign );
+                var sig = pauls_info[ 2 ];
+                var sig_is_valid = await nobleSecp256k1.verify( sig, msghash, pauls_key );
+                if ( !sig_is_valid ) return;
                 //todo: fix the sequence which should be 144 * 7 not 1 * 7
                 //Vicky can broadcast her refund tx after making a new state with Paul
                 //but since she revoked it, Paul has 1 week to to take her money. He
@@ -672,7 +751,6 @@
                 var [ refund_tpubkey, cblock ] = tapscript.Tap.getPubKey( "ab".repeat( 32 ), { tree: refund_tree, target: tapscript.Tap.encodeScript( refund_scripts[ 1 ] ) });
                 refund_cblock = cblock;
                 var refund_address = tapscript.Address.p2tr.fromPubKey( refund_tpubkey, 'regtest' );
-                // console.log( "refund_address:", refund_address );
                 var tx_funding_script = [
                     2,
                     pauls_key,
@@ -680,7 +758,6 @@
                     2,
                     'OP_CHECKMULTISIG'
                 ];
-                // var tx_funding_script = [ 2, pauls_key, vickys_key, 2, 'OP_CHECKMULTISIG' ];
                 var tx_funding_address = tapscript.Address.p2wsh.fromScript( tx_funding_script, "regtest" );
                 var post_funding_script_paul = [
                     'OP_RIPEMD160',
@@ -700,7 +777,6 @@
                         'OP_CHECKSIG',
                     'OP_ENDIF',
                 ];
-                // var tx_funding_script = [ 2, pauls_key, vickys_key, 2, 'OP_CHECKMULTISIG' ];
                 var post_funding_address_paul = tapscript.Address.p2wsh.fromScript( post_funding_script_paul, "regtest" );
                 var post_funding_script_vicky = [
                     'OP_RIPEMD160',
@@ -720,9 +796,7 @@
                         'OP_CHECKSIG',
                     'OP_ENDIF',
                 ];
-                // var tx_funding_script = [ 2, pauls_key, vickys_key, 2, 'OP_CHECKMULTISIG' ];
                 var post_funding_address_vicky = tapscript.Address.p2wsh.fromScript( post_funding_script_vicky, "regtest" );
-                // console.log( "tx_funding_address:", tx_funding_address );                
                 var prefunding_txdata = tapscript.Tx.create({
                   vin  : [{
                     txid: prefunding_txid,
@@ -758,6 +832,13 @@
                   }]
                 });
                 var tx_funding_vickys_sig = tapscript.Signer.segwit.sign( privkey, tx_funding_txdata_paul, 0, { script: tx_funding_script });
+                var channel_identifier = "first_channel";
+                var transitioning_to = 0;
+                var msgnum = 1;
+                var msg_to_sign = `${channel_identifier}${transitioning_to}${msgnum}${JSON.stringify( data_for_paul )}`;
+                var msghash = await sha256( msg_to_sign );
+                var sig = await nobleSecp256k1.sign( msghash, privkey );
+                console.log( `send this to Paul: ${JSON.stringify( [ msgnum, channel_identifier, sig, data_for_paul ] )}` );
                 alert( `send the information in your console to Paul` );
                 var tx_funding_txhex_paul = tapscript.Tx.encode( tx_funding_txdata_paul ).hex;
                 var post_funding_txid = tapscript.Tx.util.getTxid( tx_funding_txhex_paul );
@@ -777,8 +858,6 @@
                     scriptPubKey: tapscript.Address.toScriptPubKey( refund_address )
                   }]
                 });
-                console.log( "post_funding_txdata_paul:" );
-                console.log( JSON.stringify( post_funding_txdata_paul ) );
                 var post_funding_vickys_sig = tapscript.Signer.segwit.sign( privkey, post_funding_txdata_paul, 0, { script: post_funding_script_paul });
                 var post_funding_txhex_paul = tapscript.Tx.encode( post_funding_txdata_paul ).hex;
                 var tx_refund_txid = tapscript.Tx.util.getTxid( post_funding_txhex_paul );
@@ -820,21 +899,24 @@
                 });
                 var tx_funding_vickys_sig_vicky = tapscript.Signer.segwit.sign( privkey, tx_funding_txdata_vicky, 0, { script: tx_funding_script });
                 var sighash = tapscript.Signer.segwit.hash( tx_funding_txdata_vicky, 0, { script: tx_funding_script } );
-                console.log( "tx_funding_txdata_vicky:" );
-                console.log( JSON.stringify( tx_funding_txdata_vicky ) );
-                console.log( "its sighash:", sighash.hex );
                 //the following sig should move the money from the post_funding address to the refund address
                 var pauls_sigs = prompt( "enter three sigs from Paul" );
                 pauls_sigs = JSON.parse( pauls_sigs );
-                var tx_funding_pauls_sig = pauls_sigs[ 0 ];
+                var channel_identifier = pauls_sigs[ 1 ];
+                var transitioning_to = 0;
+                var msgnum = 2;
+                var msg_to_sign = `${channel_identifier}${transitioning_to}${msgnum}${pauls_sigs[ 3 ]}${pauls_sigs[ 4 ]}${pauls_sigs[ 5 ]}`;
+                var msghash = await sha256( msg_to_sign );
+                var sig = pauls_sigs[ 2 ];
+                var sig_is_valid = await nobleSecp256k1.verify( sig, msghash, pauls_key );
+                if ( !sig_is_valid ) return;
+                var tx_funding_pauls_sig = pauls_sigs[ 3 ];
                 var sigflag = tx_funding_pauls_sig.substring( tx_funding_pauls_sig.length - 2 );
                 if ( sigflag != "01" ) return alert( "tx_funding sig was not good due to bad sigflag! Aborting" );
                 var sig_is_good = await nobleSecp256k1.verify( tx_funding_pauls_sig.substring( 0, tx_funding_pauls_sig.length - 2 ), bytesToHex( sighash ), pauls_key );
                 if ( !sig_is_good ) return alert( "tx_funding sig was not good due to not validating! Aborting" );
                 tx_funding_txdata_vicky.vin[ 0 ].witness = [ 0, tx_funding_pauls_sig, tx_funding_vickys_sig_vicky, tx_funding_script ];
                 var tx_funding_txhex_vicky = tapscript.Tx.encode( tx_funding_txdata_vicky ).hex;
-                console.log( "prefunding_txhex:", prefunding_txhex );
-                console.log( "tx_funding_txhex_vicky:", tx_funding_txhex_vicky );
                 var tx_funding_txhex_vicky = tapscript.Tx.encode( tx_funding_txdata_vicky ).hex;
                 var post_funding_txid = tapscript.Tx.util.getTxid( tx_funding_txhex_vicky );
                 var post_funding_vout = 0;
@@ -853,11 +935,9 @@
                     scriptPubKey: tapscript.Address.toScriptPubKey( refund_address )
                   }]
                 });
-                console.log( "post_funding_txdata_vicky:" );
-                console.log( JSON.stringify( post_funding_txdata_vicky ) );
                 var post_funding_vickys_sig_vicky = tapscript.Signer.segwit.sign( privkey, post_funding_txdata_vicky, 0, { script: post_funding_script_vicky });
                 //the following sig should move the money from the post_funding address to the refund address
-                var post_funding_pauls_sig = pauls_sigs[ 1 ];
+                var post_funding_pauls_sig = pauls_sigs[ 4 ];
                 var sighash = tapscript.Signer.segwit.hash( post_funding_txdata_vicky, 0, { script: post_funding_script_vicky } );
                 var sigflag = post_funding_pauls_sig.substring( post_funding_pauls_sig.length - 2 );
                 if ( sigflag != "01" ) return alert( "post_funding sig was not good due to bad sigflag! Aborting" );
@@ -865,9 +945,7 @@
                 if ( !sig_is_good ) return alert( "post_funding sig was not good due to not validating! Aborting" );
                 post_funding_txdata_vicky.vin[ 0 ].witness = [ 0, post_funding_pauls_sig, post_funding_vickys_sig_vicky, vickys_publication_preimage, post_funding_script_vicky ];
                 var post_funding_txhex_vicky = tapscript.Tx.encode( post_funding_txdata_vicky ).hex;
-                console.log( "post_funding_txhex_vicky:", post_funding_txhex_vicky );
                 var tx_refund_txid = tapscript.Tx.util.getTxid( post_funding_txhex_vicky );
-                console.log( "tx_refund_txid:", tx_refund_txid );
                 var tx_refund_vout = 0;
                 var tx_refund_amt = post_funding_amt - 500;
                 var tx_refund_txdata_vicky = tapscript.Tx.create({
@@ -890,17 +968,18 @@
                 var final_amt = tx_refund_amt - 500;
                 var tx_refund_vickys_sig = tapscript.Signer.taproot.sign( privkey, tx_refund_txdata_vicky, 0, { extension: tapscript.Tap.encodeScript( refund_scripts[ 1 ] ) });
                 //the following sig should move the money from the refund address to vicky
-                var tx_refund_pauls_sig = pauls_sigs[ 2 ];
+                var tx_refund_pauls_sig = pauls_sigs[ 5 ];
                 var sighash = tapscript.Signer.taproot.hash( tx_refund_txdata_vicky, 0, { extension: tapscript.Tap.encodeScript( refund_scripts[ 1 ] ) } );
                 if ( tx_refund_pauls_sig.length > 128 ) return alert( "tx_refund sig was not good due to bad sigflag! Aborting." );
                 var sig_is_good = await nobleSecp256k1.schnorr.verify( tx_refund_pauls_sig, bytesToHex( sighash ), pauls_key.substring( 2 ) );
                 if ( !sig_is_good ) return alert( "tx_refund sig was not good! Aborting" );
                 tx_refund_txdata_vicky.vin[ 0 ].witness = [ tx_refund_vickys_sig, tx_refund_pauls_sig, refund_scripts[ 1 ], refund_cblock ];
                 var tx_refund_txhex_vicky = tapscript.Tx.encode( tx_refund_txdata_vicky ).hex;
-                console.log( "tx_refund_txhex_vicky:", tx_refund_txhex_vicky );
                 console.log( `Broadcast this tx to make your channel:\n\n${prefunding_txhex}` );
                 alert( `Broadcast your funding transaction (it is in your console)` );
-                vicky_db = {
+                vicky_channels[ "first_channel" ] = {
+                    privkey,
+                    vickys_key,
                     tx_funding_amt,
                     pauls_key,
                     tx_funding_address,
@@ -923,6 +1002,7 @@
                     },
                 }
             }
+            setTimeout( makeChannel, 100 );
         </script>
     </body>
 </html>
