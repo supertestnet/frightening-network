@@ -6,6 +6,7 @@
         <script src="https://unpkg.com/@cmdcode/tapscript@1.4.3"></script>
         <script src="https://bundle.run/noble-secp256k1@1.2.14"></script>
         <script src="https://unpkg.com/@dashincubator/ripemd160/ripemd160.js"></script>
+        <script src="https://bundle.run/browserify-cipher@1.0.1"></script>
         <script>
             function hexToBytes( hex ) {
                 return Uint8Array.from( hex.match( /.{1,2}/g ).map( ( byte ) => parseInt( byte, 16 ) ) );
@@ -13,6 +14,15 @@
 
             function bytesToHex( bytes ) {
                 return bytes.reduce( ( str, byte ) => str + byte.toString( 16 ).padStart( 2, "0" ), "" );
+            }
+            function base64ToHex( str ) {
+                var raw = atob( str );
+                var result = '';
+                var i; for ( i=0; i<raw.length; i++ ) {
+                    var hex = raw.charCodeAt( i ).toString( 16 );
+                    result += ( hex.length === 2 ? hex : '0' + hex );
+                }
+                return result;
             }
             var rmd160 = s => {
                 if ( typeof s == "string" ) s = new TextEncoder().encode( s );
@@ -56,6 +66,46 @@
                 font-size: 1.15rem;
                 border: 1px solid grey;
             }
+            .toast {
+              box-sizing: border-box;
+              visibility: hidden; /* Hidden by default. Visible on click */
+              width: 250px; /* Set a default minimum width */
+              margin-left: -125px; /* Divide value of min-width by 2 */
+              background-color: lightgreen; /* Blue background color */
+              color: white; /* White text color */
+              text-align: center; /* Centered text */
+              border-radius: 2px; /* Rounded borders */
+              padding: 16px; /* Padding */
+              position: fixed; /* Sit on top of the screen */
+              z-index: 1; /* Add a z-index if needed */
+              left: 50%; /* Center the toast */
+              bottom: 30px; /* 30px from the bottom */
+            }
+            /* Show the toast when clicking on a button (class added with JavaScript) */
+            .toast.show {
+              visibility: visible; /* Show the toast */
+              /* Add animation: Take 0.5 seconds to fade in and out the toast.
+              However, delay the fade out process for 2.5 seconds */
+              -webkit-animation: fadein 0.5s, fadeout 0.5s 2.5s;
+              animation: fadein 0.5s, fadeout 0.5s 2.5s;
+            }
+            /* Animations to fade the toast in and out */
+            @-webkit-keyframes fadein {
+              from {bottom: 0; opacity: 0;}
+              to {bottom: 30px; opacity: 1;}
+            }
+            @keyframes fadein {
+              from {bottom: 0; opacity: 0;}
+              to {bottom: 30px; opacity: 1;}
+            }
+            @-webkit-keyframes fadeout {
+              from {bottom: 30px; opacity: 1;}
+              to {bottom: 0; opacity: 0;}
+            }
+            @keyframes fadeout {
+              from {bottom: 30px; opacity: 1;}
+              to {bottom: 0; opacity: 0;}
+            }
             @media screen and (max-width: 600px) {
             }
         </style>
@@ -72,6 +122,8 @@
             var changeStateWithHtlc = async channel_identifier => {
                 var am_sending = confirm( `Click ok if you want to send Paul money (in which case you must pass in the pmthash) or click cancel if you want Paul to send you money` );
                 var privkey = vicky_channels[ channel_identifier ][ "privkey" ];
+                var pauls_key = vicky_channels[ channel_identifier ][ "pauls_key" ];
+                var vickys_key = vicky_channels[ channel_identifier ][ "vickys_key" ];
                 if ( !am_sending ) {
                     var preimage = getRand( 32 );
                     var pmthash = await sha256( hexToBytes( preimage ) );
@@ -80,14 +132,27 @@
                     var msg_to_sign = `${channel_identifier}${transitioning_to}${msgnum}${pmthash}`;
                     var msghash = await sha256( msg_to_sign );
                     var sig = await nobleSecp256k1.sign( msghash, privkey );
-                    console.log( "give this to Paul:", JSON.stringify( [ msgnum, channel_identifier, sig, pmthash ] ) );
-                    alert( `Give the data in your console to Paul` );
+                    // console.log( "give this to Paul:", JSON.stringify( [ msgnum, channel_identifier, sig, pmthash ] ) );
+                    //todo: use more relays
+                    alert( `Hit ok to send msg ${msgnum}` );
+                    var event_id = await sendDM( JSON.stringify( [ msgnum, channel_identifier, sig, pmthash ] ), pauls_key.substring( 2 ), "wss://nostrue.com", vickys_key.substring( 2 ), privkey, msgnum );
+                    await eventWasReplayedTilSeen( event_id, "wss://nostrue.com" );
+                    showToast( `sent message ${msgnum}` );
+                    await waitSomeSeconds( 2 );
+                    console.log( `sent message ${msgnum}` );
+                    // alert( `Give the data in your console to Paul` );
                     var how_much_msg = `How much money (in sats) do you want Paul to send to you?`;
                     var amt = prompt( how_much_msg );
                     amt = Number( amt );
                     var conf = true;
                 } else {
-                    var pauls_data = prompt( `enter the data from Paul` );
+                    //todo: use more relays
+                    var msgnum = 5;
+                    alert( `Hit ok when your counterparty sent message ${msgnum}` );
+                    var msg_from_counterparty = await getDMs( [ vickys_key.substring( 2 ) ], "wss://nostrue.com" );
+                    var pauls_data = decrypt( privkey, msg_from_counterparty.pubkey, msg_from_counterparty.content );
+                    console.log( `Got message ${msgnum}`, pauls_data );
+                    // var pauls_data = prompt( `enter the data from Paul` );
                     pauls_data = JSON.parse( pauls_data );
                     var pmthash = pauls_data[ 3 ];
                     var amt = pauls_data[ 4 ];
@@ -95,7 +160,6 @@
                     var pauls_key = vicky_channels[ channel_identifier ][ "pauls_key" ];
                     if ( !( "old_states" in vicky_channels[ channel_identifier ] ) ) vicky_channels[ channel_identifier ][ "old_states" ] = [];
                     var transitioning_to = vicky_channels[ channel_identifier ][ "old_states" ].length;
-                    var msgnum = 5;
                     var msg_to_sign = `${channel_identifier}${transitioning_to}${msgnum}${pmthash}${amt}`;
                     var msghash = await sha256( msg_to_sign );
                     var sig = pauls_data[ 2 ];
@@ -106,14 +170,19 @@
                 if ( !conf ) return;
                 await changeState( channel_identifier, pmthash, "", am_sending, amt );
                 if ( am_sending ) {
-                    var pauls_info = prompt( `enter a preimage from Paul` );
+                    //todo: use more relays
+                    var msgnum = 40;
+                    alert( `Hit ok when your counterparty sent message ${msgnum}\n\nDO NOT SEND ME FIRST` );
+                    var msg_from_counterparty = await getDMs( [ vickys_key.substring( 2 ) ], "wss://nostrue.com" );
+                    var pauls_info = decrypt( privkey, msg_from_counterparty.pubkey, msg_from_counterparty.content );
+                    console.log( `Got message ${msgnum}`, pauls_info );
+                    // var pauls_info = prompt( `enter a preimage from Paul` );
                     pauls_info = JSON.parse( pauls_info );
                     var preimage = pauls_info[ 3 ];
                     var channel_identifier = pauls_info[ 1 ];
                     var pauls_key = vicky_channels[ channel_identifier ][ "pauls_key" ];
                     if ( !( "old_states" in vicky_channels[ channel_identifier ] ) ) vicky_channels[ channel_identifier ][ "old_states" ] = [];
                     var transitioning_to = vicky_channels[ channel_identifier ][ "old_states" ].length;
-                    var msgnum = 40;
                     var msg_to_sign = `${channel_identifier}${transitioning_to}${msgnum}${preimage}`;
                     var msghash = await sha256( msg_to_sign );
                     var sig = pauls_info[ 2 ];
@@ -127,8 +196,15 @@
                     var msghash = await sha256( msg_to_sign );
                     var sig = await nobleSecp256k1.sign( msghash, privkey );
                     var sig_is_valid = await nobleSecp256k1.verify( sig, msghash, vicky_channels[ channel_identifier ][ "vickys_key" ] );
-                    console.log( `send this preimage to Paul: ${JSON.stringify( [ msgnum, channel_identifier, sig, preimage ] )}` );
-                    alert( `Send the data in your console to Paul` );
+                    // console.log( `send this preimage to Paul: ${JSON.stringify( [ msgnum, channel_identifier, sig, preimage ] )}` );
+                    //todo: use more relays
+                    alert( `Hit ok to send msg ${msgnum}` );
+                    var event_id = await sendDM( JSON.stringify( [ msgnum, channel_identifier, sig, preimage ] ), pauls_key.substring( 2 ), "wss://nostrue.com", vickys_key.substring( 2 ), privkey, msgnum );
+                    await eventWasReplayedTilSeen( event_id, "wss://nostrue.com" );
+                    showToast( `sent message ${msgnum}` );
+                    await waitSomeSeconds( 2 );
+                    console.log( `sent message ${msgnum}` );
+                    // alert( `Send the data in your console to Paul` );
                 }
                 var resolve_htlc = true;
                 var real_pmthash = await sha256( hexToBytes( preimage ) );
@@ -228,6 +304,7 @@
                 var justice_txhex = tapscript.Tx.encode( justice_txdata ).hex;
             }
             var changeState = async ( channel_identifier, pmthash, preimage, am_sending, amt, resolve_htlc ) => {
+                var pauls_key = vicky_channels[ channel_identifier ][ "pauls_key" ];
                 var vickys_key = vicky_channels[ channel_identifier ][ "vickys_key" ];
                 var privkey = vicky_channels[ channel_identifier ][ "privkey" ];
                 if ( !resolve_htlc ) {
@@ -246,17 +323,28 @@
                 var msg_to_sign = `${channel_identifier}${transitioning_to}${msgnum}${vickys_new_publication_hash}${vickys_new_revocation_hash}${amount_for_paul}`;
                 var msghash = await sha256( msg_to_sign );
                 var sig = await nobleSecp256k1.sign( msghash, privkey );
-                console.log( `give this data to Paul and get his pub & rev hashes: ${ JSON.stringify( [ msgnum, channel_identifier, sig, vickys_new_publication_hash, vickys_new_revocation_hash, amount_for_paul ] ) }` );
-                alert( `send the data in your console to Paul` );
-                var pauls_data = prompt( "enter Paul's new pub & rev hashes & his btc address" );
+                // console.log( `give this data to Paul and get his pub & rev hashes: ${ JSON.stringify( [ msgnum, channel_identifier, sig, vickys_new_publication_hash, vickys_new_revocation_hash, amount_for_paul ] ) }` );
+                //todo: use more relays
+                alert( `Hit ok to send msg ${msgnum}` );
+                var event_id = await sendDM( JSON.stringify( [ msgnum, channel_identifier, sig, vickys_new_publication_hash, vickys_new_revocation_hash, amount_for_paul ] ), pauls_key.substring( 2 ), "wss://nostrue.com", vickys_key.substring( 2 ), privkey, msgnum );
+                await eventWasReplayedTilSeen( event_id, "wss://nostrue.com" );
+                showToast( `sent message ${msgnum}`, event_id, JSON.stringify( [ msgnum, channel_identifier, sig, vickys_new_publication_hash, vickys_new_revocation_hash, amount_for_paul ] ) );
+                await waitSomeSeconds( 2 );
+                console.log( `sent message ${msgnum}` );
+                // alert( `send the data in your console to Paul` );
+                //todo: use more relays
+                var msgnum = 15;
+                alert( `Hit ok when your counterparty sent message ${msgnum}` );
+                var msg_from_counterparty = await getDMs( [ vickys_key.substring( 2 ) ], "wss://nostrue.com" );
+                var pauls_data = decrypt( privkey, msg_from_counterparty.pubkey, msg_from_counterparty.content );
+                console.log( `Got message ${msgnum}`, pauls_data );
+                // var pauls_data = prompt( "enter Paul's new pub & rev hashes & his btc address" );
                 pauls_data = JSON.parse( pauls_data );
                 var pauls_new_publication_hash = pauls_data[ 3 ];
                 var pauls_new_revocation_hash = pauls_data[ 4 ];
                 var pauls_address = pauls_data[ 5 ];
                 var channel_identifier = pauls_data[ 1 ];
-                var pauls_key = vicky_channels[ channel_identifier ][ "pauls_key" ];
                 var transitioning_to = vicky_channels[ channel_identifier ][ "old_states" ].length + 1;
-                var msgnum = 15;
                 var msg_to_sign = `${channel_identifier}${transitioning_to}${msgnum}${pauls_new_publication_hash}${pauls_new_revocation_hash}${pauls_address}`;
                 var msghash = await sha256( msg_to_sign );
                 var sig = pauls_data[ 2 ];
@@ -304,7 +392,6 @@
                 // var tx_funding_script = [ 2, pauls_key, vickys_key, 2, 'OP_CHECKMULTISIG' ];
                 var new_post_funding_address_vicky = tapscript.Address.p2wsh.fromScript( new_post_funding_script_vicky, "regtest" );
                 vicky_channels[ channel_identifier ][ "pauls_address" ] = pauls_address;
-                var pauls_key = vicky_channels[ channel_identifier ][ "pauls_key" ];
                 var new_tx_commit_scripts = [
                     [ 'OP_RIPEMD160', vickys_new_publication_hash, 'OP_EQUALVERIFY', 'OP_RIPEMD160', vickys_new_revocation_hash, 'OP_EQUALVERIFY', pauls_key.substring( 2 ), 'OP_CHECKSIG' ],
                     [ 0, pauls_key.substring( 2 ), 'OP_CHECKSIGADD', vickys_key.substring( 2 ), 'OP_CHECKSIGADD', 2, 'OP_EQUALVERIFY', 1 * 7, 'OP_CHECKSEQUENCEVERIFY', 'OP_0NOTEQUAL' ],
@@ -460,8 +547,15 @@
                 var msg_to_sign = `${channel_identifier}${transitioning_to}${msgnum}${new_tx_funding_vickys_sig.hex}${new_post_funding_vickys_sig.hex}${new_tx_commit_vickys_sig.hex}`;
                 var msghash = await sha256( msg_to_sign );
                 var sig = await nobleSecp256k1.sign( msghash, privkey );
-                console.log( `give these three sigs to Paul: ${JSON.stringify( [ msgnum, channel_identifier, sig, new_tx_funding_vickys_sig.hex, new_post_funding_vickys_sig.hex, new_tx_commit_vickys_sig.hex ] )}` );
-                alert( `send the data in your console to Paul` );
+                // console.log( `give these three sigs to Paul: ${JSON.stringify( [ msgnum, channel_identifier, sig, new_tx_funding_vickys_sig.hex, new_post_funding_vickys_sig.hex, new_tx_commit_vickys_sig.hex ] )}` );
+                //todo: use more relays
+                alert( `Hit ok to send msg ${msgnum}` );
+                var event_id = await sendDM( JSON.stringify( [ msgnum, channel_identifier, sig, new_tx_funding_vickys_sig.hex, new_post_funding_vickys_sig.hex, new_tx_commit_vickys_sig.hex ] ), pauls_key.substring( 2 ), "wss://nostrue.com", vickys_key.substring( 2 ), privkey, msgnum );
+                await eventWasReplayedTilSeen( event_id, "wss://nostrue.com" );
+                showToast( `sent message ${msgnum}` );
+                await waitSomeSeconds( 2 );
+                console.log( `sent message ${msgnum}` );
+                // alert( `send the data in your console to Paul` );
                 //versions for Vicky
                 var new_tx_funding_txdata = tapscript.Tx.create({
                   vin  : [{
@@ -595,12 +689,16 @@
                     }
                 }
                 var new_tx_commit_vickys_sig = tapscript.Signer.taproot.sign( privkey, new_tx_commit_txdata, 0, { extension: tapscript.Tap.encodeScript( new_tx_commit_scripts[ 1 ] ) });
-                var pauls_data = prompt( "enter three sigs from Paul" );
+                //todo: use more relays
+                var msgnum = 25;
+                alert( `Hit ok when your counterparty sent message ${msgnum}` );
+                var msg_from_counterparty = await getDMs( [ vickys_key.substring( 2 ) ], "wss://nostrue.com" );
+                var pauls_data = decrypt( privkey, msg_from_counterparty.pubkey, msg_from_counterparty.content );
+                console.log( `Got message ${msgnum}`, pauls_data );
+                // var pauls_data = prompt( "enter three sigs from Paul" );
                 pauls_data = JSON.parse( pauls_data );
                 var channel_identifier = pauls_data[ 1 ];
-                var pauls_key = vicky_channels[ channel_identifier ][ "pauls_key" ];
                 var transitioning_to = vicky_channels[ channel_identifier ][ "old_states" ].length + 1;
-                var msgnum = 25;
                 var msg_to_sign = `${channel_identifier}${transitioning_to}${msgnum}${pauls_data[ 3 ]}${pauls_data[ 4 ]}${pauls_data[ 5 ]}`;
                 var msghash = await sha256( msg_to_sign );
                 var sig = pauls_data[ 2 ];
@@ -664,16 +762,28 @@
                 var transitioning_to = vicky_channels[ channel_identifier ][ "old_states" ].length;
                 var msgnum = 30;
                 var msg_to_sign = `${channel_identifier}${transitioning_to}${msgnum}${vicky_channels[ channel_identifier ][ "old_states" ][ vicky_channels[ channel_identifier ][ "old_states" ].length - 1 ][ "vickys_revocation_preimage" ]}`;
+                console.log( "msg_to_sign:", msg_to_sign );
                 var msghash = await sha256( msg_to_sign );
                 var sig = await nobleSecp256k1.sign( msghash, privkey );
-                console.log( `Send this revocation preimage to Paul and get his: ${JSON.stringify( [ msgnum, channel_identifier, sig, vicky_channels[ channel_identifier ][ "old_states" ][ vicky_channels[ channel_identifier ][ "old_states" ].length - 1 ][ "vickys_revocation_preimage" ] ] )}` );
-                alert( `Send the revocation preimage for state ${vicky_channels[ channel_identifier ][ "old_states" ].length - 1} to Paul (it's in your console)` );
-                var pauls_data = prompt( `Enter Paul's revocation preimage` );
+                // console.log( `Send this revocation preimage to Paul and get his: ${JSON.stringify( [ msgnum, channel_identifier, sig, vicky_channels[ channel_identifier ][ "old_states" ][ vicky_channels[ channel_identifier ][ "old_states" ].length - 1 ][ "vickys_revocation_preimage" ] ] )}` );
+                //todo: use more relays
+                alert( `Hit ok to send msg ${msgnum}` );
+                var event_id = await sendDM( JSON.stringify( [ msgnum, channel_identifier, sig, vicky_channels[ channel_identifier ][ "old_states" ][ vicky_channels[ channel_identifier ][ "old_states" ].length - 1 ][ "vickys_revocation_preimage" ] ] ), pauls_key.substring( 2 ), "wss://nostrue.com", vickys_key.substring( 2 ), privkey, msgnum );
+                await eventWasReplayedTilSeen( event_id, "wss://nostrue.com" );
+                showToast( `sent message ${msgnum}` );
+                await waitSomeSeconds( 2 );
+                console.log( `sent message ${msgnum}` );
+                // alert( `Send the revocation preimage for state ${vicky_channels[ channel_identifier ][ "old_states" ].length - 1} to Paul (it's in your console)` );
+                //todo: use more relays
+                var msgnum = 35;
+                alert( `Hit ok when your counterparty sent message ${msgnum}` );
+                var msg_from_counterparty = await getDMs( [ vickys_key.substring( 2 ) ], "wss://nostrue.com" );
+                var pauls_data = decrypt( privkey, msg_from_counterparty.pubkey, msg_from_counterparty.content );
+                console.log( `Got message ${msgnum}`, pauls_data );
+                // var pauls_data = prompt( `Enter Paul's revocation preimage` );
                 pauls_data = JSON.parse( pauls_data );
                 var channel_identifier = pauls_data[ 1 ];
-                var pauls_key = vicky_channels[ channel_identifier ][ "pauls_key" ];
                 var transitioning_to = vicky_channels[ channel_identifier ][ "old_states" ].length;
-                var msgnum = 35;
                 var msg_to_sign = `${channel_identifier}${transitioning_to}${msgnum}${pauls_data[ 3 ]}`;
                 var msghash = await sha256( msg_to_sign );
                 var sig = pauls_data[ 2 ];
@@ -685,12 +795,160 @@
                 if ( rmd160( hexToBytes( pauls_revocation_preimage ) ) != pauls_revocation_hash ) return alert( `Time to force close! Paul sent you a wrong revocation preimage! Broadcast these transactions:\n\n${vicky_channels[ channel_identifier ][ "force_close_txs" ][ "to_reveal" ]}\n\n${vicky_channels[ channel_identifier ][ "force_close_txs" ][ "to_delay" ]}\n\nThen wait 1008 blocks, then broadcast this transaction:\n\n${vicky_channels[ channel_identifier ][ "force_close_txs" ][ "final_tx" ]}` );
                 vicky_channels[ channel_identifier ][ "old_states" ][ vicky_channels[ channel_identifier ][ "old_states" ].length - 1 ][ "pauls_revocation_preimage" ] = pauls_revocation_preimage;
             }
+            var getDMs = async ( pubkeys, relay ) => {
+                return new Promise( function( resolve, reject ) {
+                    var started_waiting_time = Math.floor( Date.now() / 1000 );
+                    var relays = [ relay ];
+                    var resolveEvent = async event => {
+                        if ( !event ) return;
+                        var event = JSON.parse( event.data );
+                        if ( !event[ 2 ] || event[ 2 ] === true ) return;
+                        var sig = event[ 2 ].sig;
+                        var eventData = JSON.stringify([
+                            0,
+                            event[ 2 ]['pubkey'],
+                            event[ 2 ]['created_at'],
+                            event[ 2 ]['kind'],
+                            event[ 2 ]['tags'],
+                            event[ 2 ]['content']
+                        ]);
+                        var id  = await sha256( eventData ).toString( 'hex' );
+                        var valid = await nobleSecp256k1.schnorr.verify( sig, id, event[ 2 ].pubkey );
+                        resolve( event[ 2 ] );
+                    }
+                    var open = ( pubkeys, started_waiting_time ) => {
+                        var randomid = bytesToHex( nobleSecp256k1.utils.randomPrivateKey() ).substring( 0, 16 );
+                        var filter = { "#p": pubkeys, "since": started_waiting_time - 30, "limit": 1 }
+                        var subscription = [ "REQ", randomid, filter ];
+                        subscription = JSON.stringify( subscription );
+                        socket.addEventListener( 'open', () => {socket.send( subscription );});
+                    }
+                    socket = {}
+                    socket = new WebSocket( relay );
+                    socket.addEventListener( 'message', resolveEvent );
+                    open( pubkeys, started_waiting_time );
+                    setTimeout( () => {resolve( "not found" )}, 2000 );
+                });
+            }
+            async function getSignedEvent( event, privateKey ) {
+                var eventData = JSON.stringify([
+                    0,
+                    event['pubkey'],
+                    event['created_at'],
+                    event['kind'],
+                    event['tags'],
+                    event['content']
+                ]);
+                var id = await sha256( eventData );
+                event.id = id;
+                event.sig = await nobleSecp256k1.schnorr.sign( event.id, privateKey );
+                return event;
+            }
+            var sendDM = async ( note, recipient, relay, mypubkey, myprivkey, num ) => {
+                var event = {
+                    "content": encrypt( myprivkey, recipient, note ),
+                    "created_at": Math.floor( Date.now() / 1000 ),
+                    "kind": 4,
+                    "tags": [ [ "p", recipient ], [ "num", String( num ) ] ],
+                    "pubkey": mypubkey
+                }
+                var signed_event = await getSignedEvent( event, myprivkey );
+                var open = () => {
+                    socket.send( JSON.stringify( ["EVENT", signed_event ] ) )
+                }
+                open();
+                return signed_event.id;
+            }
+            function encrypt( privkey, pubkey, text ) {
+                var key = nobleSecp256k1.getSharedSecret( privkey, '02' + pubkey, true ).substring( 2 );
+                var iv = hexToBytes( getRand( 16 ) );
+                var cipher = browserifyCipher.createCipheriv( 'aes-256-cbc', hexToBytes( key ), iv );
+                var encryptedMessage = cipher.update(text,"utf8","base64");
+                emsg = encryptedMessage + cipher.final( "base64" );
+                var uint8View = new Uint8Array( iv.buffer );
+                var decoder = new TextDecoder();
+                return emsg + "?iv=" + btoa( String.fromCharCode.apply( null, uint8View ) );
+            }
+            function decrypt( privkey, pubkey, ciphertext ) {
+                var [ emsg, iv ] = ciphertext.split( "?iv=" );
+                var key = nobleSecp256k1.getSharedSecret( privkey, '02' + pubkey, true ).substring( 2 );
+                var decipher = browserifyCipher.createDecipheriv(
+                    'aes-256-cbc',
+                    hexToBytes( key ),
+                    hexToBytes( base64ToHex( iv ) )
+                );
+                var decryptedMessage = decipher.update( emsg, "base64" );
+                dmsg = decryptedMessage + decipher.final( "utf8" );
+                return dmsg;
+            }
+            var waitSomeSeconds = num => {
+                var num = num.toString() + "000";
+                num = Number( num );
+                return new Promise( resolve => setTimeout( resolve, num ) );
+            }
+            function showToast( content ) {
+                var x = $( '.toast' );
+                x.innerHTML = content;
+                x.classList.add( "show" );
+                setTimeout(function(){ x.classList.remove( "show" ); }, 3000);
+            }
+            var eventWasReplayedTilSeen = async ( event_id, the_relay, num ) => {
+                if ( !num ) num = 0;
+                var event = await getNostrNote( event_id, the_relay );
+                if ( event != "time is up" ) return true;
+                console.log( "replaying this event:", event_id, "at this relay:", the_relay );
+                num = num + 1;
+                await setNostrNote( event, the_relay );
+                var was_seen = false;
+                if ( num < 6 ) was_seen = await eventWasReplayedTilSeen( event_id, the_relay, num );
+                return was_seen;
+            }
+            var getNostrNote = async ( id, relay ) => {
+                return new Promise( function( resolve, reject ) {
+                    var started_waiting_time = Math.floor( Date.now() / 1000 );
+                    var relays = [ relay ];
+                    var resolveEvent = async event => {
+                        if ( !event ) return;
+                        var event = JSON.parse( event.data );
+                        if ( !event[ 2 ] || event[ 2 ] === true ) return;
+                        var sig = event[ 2 ].sig;
+                        var eventData = JSON.stringify([
+                            0,
+                            event[ 2 ]['pubkey'],
+                            event[ 2 ]['created_at'],
+                            event[ 2 ]['kind'],
+                            event[ 2 ]['tags'],
+                            event[ 2 ]['content']
+                        ]);
+                        var id  = await sha256( eventData );
+                        var valid = await nobleSecp256k1.schnorr.verify( sig, id, event[ 2 ].pubkey );
+                        resolve( event[ 2 ] );
+                    }
+                    var open = id => {
+                        var randomid = bytesToHex( nobleSecp256k1.utils.randomPrivateKey() ).substring( 0, 16 );
+                        var filter = { "ids": [ id ] }
+                        var subscription = [ "REQ", randomid, filter ];
+                        subscription = JSON.stringify( subscription );
+                        socket.addEventListener( 'open', () => {socket.send( subscription );});
+                    }
+                    socket = {}
+                    socket = new WebSocket( relay );
+                    socket.addEventListener( 'message', resolveEvent );
+                    open( id );
+                    setTimeout( () => {resolve( "not found" )}, 2000 );
+                });
+            }
+            var setNostrNote = async ( event, relay ) => {
+                socket.send( JSON.stringify( ["EVENT", event ] ) );
+            }
         </script>
     </head>
     <body>
         <h1>Hi Vicky</h1>
         <script>
             var vicky_channels = {}
+            var relay = "wss://nostrue.com";
+            var socket = new WebSocket( relay );
             var makeChannel = async () => {
                 //todo: get this address from elsewhere
                 var vickys_address = 'bcrt1q738hdjlatdx9xmg3679kwq9cwd7fa2c84my9zk';
@@ -701,7 +959,6 @@
                 var vickys_publication_hash = rmd160( hexToBytes( vickys_publication_preimage ) );
                 var vickys_revocation_preimage = bytesToHex( nobleSecp256k1.utils.randomPrivateKey() ).substring( 0, 32 );
                 var vickys_revocation_hash = rmd160( hexToBytes( vickys_revocation_preimage ) );
-                console.log( vickys_key );
                 var prefunding_address = tapscript.Address.p2wpkh.fromPubKey( vickys_key, "regtest" );
                 console.log( "prefunding_address:", prefunding_address );
                 var prefunding_txid = prompt( "Send some money to the bitcoin address in your console and enter the txid of the transaction" );
@@ -833,8 +1090,15 @@
                 var msg_to_sign = `${channel_identifier}${transitioning_to}${msgnum}${JSON.stringify( data_for_paul )}`;
                 var msghash = await sha256( msg_to_sign );
                 var sig = await nobleSecp256k1.sign( msghash, privkey );
-                console.log( `send this to Paul: ${JSON.stringify( [ msgnum, channel_identifier, sig, data_for_paul ] )}` );
-                alert( `send the information in your console to Paul` );
+                // console.log( `send this to Paul: ${JSON.stringify( [ msgnum, channel_identifier, sig, data_for_paul ] )}` );
+                //todo: use more relays
+                alert( `Hit ok to send msg ${msgnum}` );
+                var event_id = await sendDM( JSON.stringify( [ msgnum, channel_identifier, sig, data_for_paul ] ), pauls_key.substring( 2 ), "wss://nostrue.com", vickys_key.substring( 2 ), privkey, msgnum );
+                await eventWasReplayedTilSeen( event_id, "wss://nostrue.com" );
+                showToast( `sent message ${msgnum}` );
+                await waitSomeSeconds( 2 );
+                console.log( `sent message ${msgnum}` );
+                // alert( `send the information in your console to Paul` );
                 var tx_funding_txhex_paul = tapscript.Tx.encode( tx_funding_txdata_paul ).hex;
                 var post_funding_txid = tapscript.Tx.util.getTxid( tx_funding_txhex_paul );
                 var post_funding_vout = 0;
@@ -894,12 +1158,17 @@
                 });
                 var tx_funding_vickys_sig_vicky = tapscript.Signer.segwit.sign( privkey, tx_funding_txdata_vicky, 0, { script: tx_funding_script });
                 var sighash = tapscript.Signer.segwit.hash( tx_funding_txdata_vicky, 0, { script: tx_funding_script } );
-                //the following sig should move the money from the post_funding address to the refund address
-                var pauls_sigs = prompt( "enter three sigs from Paul" );
+                //todo: use more relays
+                var msgnum = 2;
+                alert( `Hit ok when your counterparty sent message ${msgnum}` );
+                var msg_from_counterparty = await getDMs( [ vickys_key.substring( 2 ) ], "wss://nostrue.com" );
+                var pauls_sigs = decrypt( privkey, msg_from_counterparty.pubkey, msg_from_counterparty.content );
+                console.log( `Got message ${msgnum}`, pauls_sigs );
+                // var pauls_sigs = prompt( "enter three sigs from Paul" );
                 pauls_sigs = JSON.parse( pauls_sigs );
+                //the following sig should move the money from the post_funding address to the refund address
                 var channel_identifier = pauls_sigs[ 1 ];
                 var transitioning_to = 0;
-                var msgnum = 2;
                 var msg_to_sign = `${channel_identifier}${transitioning_to}${msgnum}${pauls_sigs[ 3 ]}${pauls_sigs[ 4 ]}${pauls_sigs[ 5 ]}`;
                 var msghash = await sha256( msg_to_sign );
                 var sig = pauls_sigs[ 2 ];
@@ -999,5 +1268,6 @@
             }
             setTimeout( makeChannel, 100 );
         </script>
+        <div class="toast"></div>
     </body>
 </html>
