@@ -6,7 +6,6 @@
         <script src="https://unpkg.com/@cmdcode/tapscript@1.4.3"></script>
         <script src="https://bundle.run/noble-secp256k1@1.2.14"></script>
         <script src="https://unpkg.com/@dashincubator/ripemd160/ripemd160.js"></script>
-        <script src="https://bundle.run/browserify-cipher@1.0.1"></script>
         <script>
             function hexToBytes( hex ) {
                 return Uint8Array.from( hex.match( /.{1,2}/g ).map( ( byte ) => parseInt( byte, 16 ) ) );
@@ -14,15 +13,6 @@
 
             function bytesToHex( bytes ) {
                 return bytes.reduce( ( str, byte ) => str + byte.toString( 16 ).padStart( 2, "0" ), "" );
-            }
-            function base64ToHex( str ) {
-                var raw = atob( str );
-                var result = '';
-                var i; for ( i=0; i<raw.length; i++ ) {
-                    var hex = raw.charCodeAt( i ).toString( 16 );
-                    result += ( hex.length === 2 ? hex : '0' + hex );
-                }
-                return result;
             }
             var rmd160 = s => {
                 if ( typeof s == "string" ) s = new TextEncoder().encode( s );
@@ -66,46 +56,6 @@
                 font-size: 1.15rem;
                 border: 1px solid grey;
             }
-            .toast {
-              box-sizing: border-box;
-              visibility: hidden; /* Hidden by default. Visible on click */
-              width: 250px; /* Set a default minimum width */
-              margin-left: -125px; /* Divide value of min-width by 2 */
-              background-color: lightgreen; /* Blue background color */
-              color: white; /* White text color */
-              text-align: center; /* Centered text */
-              border-radius: 2px; /* Rounded borders */
-              padding: 16px; /* Padding */
-              position: fixed; /* Sit on top of the screen */
-              z-index: 1; /* Add a z-index if needed */
-              left: 50%; /* Center the toast */
-              bottom: 30px; /* 30px from the bottom */
-            }
-            /* Show the toast when clicking on a button (class added with JavaScript) */
-            .toast.show {
-              visibility: visible; /* Show the toast */
-              /* Add animation: Take 0.5 seconds to fade in and out the toast.
-              However, delay the fade out process for 2.5 seconds */
-              -webkit-animation: fadein 0.5s, fadeout 0.5s 2.5s;
-              animation: fadein 0.5s, fadeout 0.5s 2.5s;
-            }
-            /* Animations to fade the toast in and out */
-            @-webkit-keyframes fadein {
-              from {bottom: 0; opacity: 0;}
-              to {bottom: 30px; opacity: 1;}
-            }
-            @keyframes fadein {
-              from {bottom: 0; opacity: 0;}
-              to {bottom: 30px; opacity: 1;}
-            }
-            @-webkit-keyframes fadeout {
-              from {bottom: 30px; opacity: 1;}
-              to {bottom: 0; opacity: 0;}
-            }
-            @keyframes fadeout {
-              from {bottom: 30px; opacity: 1;}
-              to {bottom: 0; opacity: 0;}
-            }
             @media screen and (max-width: 600px) {
             }
         </style>
@@ -122,26 +72,15 @@
             var changeStateWithHtlc = async channel_identifier => {
                 var am_sending = confirm( `Click ok if you are sending or cancel if you are receiving` );
                 var privkey = paul_channels[ channel_identifier ][ "privkey" ];
-                var pauls_key = paul_channels[ channel_identifier ][ "pauls_key" ];
-                var vickys_key = paul_channels[ channel_identifier ][ "vickys_key" ];
                 if ( am_sending ) {
-                    //todo: use more relays
-                    var msgnum = 6;
-                    alert( `Hit ok when your counterparty sent message ${msgnum}` );
-                    var msg_from_counterparty = await getDMs( [ pauls_key.substring( 2 ) ], "wss://nostrue.com" );
-                    try {
-                        var vickys_data = decrypt( privkey, msg_from_counterparty.pubkey, msg_from_counterparty.content );
-                    } catch( e ) {
-                        //todo: automate the force close
-                        return alert( `Your counterparty stopped responding during a state update! Time to force close` );
-                    }
-                    console.log( `Got message ${msgnum}`, vickys_data );
-                    // var vickys_data = prompt( `enter the data from Vicky` );
+                    var vickys_data = prompt( `enter the data from Vicky` );
                     vickys_data = JSON.parse( vickys_data );
                     var pmthash = vickys_data[ 3 ];
                     var channel_identifier = vickys_data[ 1 ];
+                    var vickys_key = paul_channels[ channel_identifier ][ "vickys_key" ];
                     if ( !( "old_states" in paul_channels[ channel_identifier ] ) ) paul_channels[ channel_identifier ][ "old_states" ] = [];
                     var transitioning_to = paul_channels[ channel_identifier ][ "old_states" ].length;
+                    var msgnum = 6;
                     var msg_to_sign = `${channel_identifier}${transitioning_to}${msgnum}${pmthash}`;
                     var msghash = await sha256( msg_to_sign );
                     var sig = vickys_data[ 2 ];
@@ -158,13 +97,7 @@
                     var msg_to_sign = `${channel_identifier}${transitioning_to}${msgnum}${pmthash}${amt}`;
                     var msghash = await sha256( msg_to_sign );
                     var sig = await nobleSecp256k1.sign( msghash, privkey );
-                    // console.log( "send this to Vicky:", JSON.stringify( [ msgnum, channel_identifier, sig, pmthash, amt ] ) );
-                    //todo: use more relays
-                    alert( `Hit ok to send msg ${msgnum}` );
-                    await sendDM( JSON.stringify( [ msgnum, channel_identifier, sig, pmthash, amt ] ), vickys_key.substring( 2 ), "wss://nostrue.com", pauls_key.substring( 2 ), privkey, msgnum );
-                    showToast( `sent message ${msgnum}` );
-                    await waitSomeSeconds( 2 );
-                    console.log( `sent message ${msgnum}` );
+                    console.log( "send this to Vicky:", JSON.stringify( [ msgnum, channel_identifier, sig, pmthash, amt ] ) );
                 }
                 if ( !am_sending ) {
                     await changeState( channel_identifier, pmthash, preimage, 0, amt );
@@ -173,32 +106,16 @@
                     var msg_to_sign = `${channel_identifier}${transitioning_to}${msgnum}${preimage}`;
                     var msghash = await sha256( msg_to_sign );
                     var sig = await nobleSecp256k1.sign( msghash, privkey );
-                    // console.log( `send this info to Vicky: ${JSON.stringify( [ msgnum, channel_identifier, sig, preimage ] )}` );
-                    //todo: use more relays
-                    alert( `Hit ok to send msg ${msgnum}\n\nSEND ME FIRST` );
-                    await sendDM( JSON.stringify( [ msgnum, channel_identifier, sig, preimage ] ), vickys_key.substring( 2 ), "wss://nostrue.com", pauls_key.substring( 2 ), privkey, msgnum );
-                    showToast( `sent message ${msgnum}` );
-                    await waitSomeSeconds( 2 );
-                    console.log( `sent message ${msgnum}` );
+                    console.log( `send this info to Vicky: ${JSON.stringify( [ msgnum, channel_identifier, sig, preimage ] )}` );
                 } else {
                     await changeState( channel_identifier, pmthash, preimage );
-                    //todo: use more relays
-                    var msgnum = 45;
-                    alert( `Hit ok when your counterparty sent message ${msgnum}` );
-                    var msg_from_counterparty = await getDMs( [ pauls_key.substring( 2 ) ], "wss://nostrue.com" );
-                    try {
-                        var vickys_info = decrypt( privkey, msg_from_counterparty.pubkey, msg_from_counterparty.content );
-                    } catch( e ) {
-                        //todo: automate the force close
-                        return alert( `Your counterparty stopped responding during a state update! Time to force close` );
-                    }
-                    console.log( `Got message ${msgnum}`, vickys_info );
-                    // var vickys_info = prompt( `enter a preimage from Vicky` );
+                    var vickys_info = prompt( `enter a preimage from Vicky` );
                     vickys_info = JSON.parse( vickys_info );
                     var preimage = vickys_info[ 3 ];
                     var channel_identifier = vickys_info[ 1 ];
                     var vickys_key = paul_channels[ channel_identifier ][ "vickys_key" ];
                     var transitioning_to = paul_channels[ channel_identifier ][ "old_states" ].length;
+                    var msgnum = 45;
                     var msg_to_sign = `${channel_identifier}${transitioning_to}${msgnum}${preimage}`;
                     var msghash = await sha256( msg_to_sign );
                     var sig = vickys_info[ 2 ];
@@ -306,31 +223,21 @@
             }
             var changeState = async ( channel_identifier, pmthash, preimage, resolve_htlc, amount_paul_wants ) => {
                 var pauls_key = paul_channels[ channel_identifier ][ "pauls_key" ];
-                var vickys_key = paul_channels[ channel_identifier ][ "vickys_key" ];
                 var privkey = paul_channels[ channel_identifier ][ "privkey" ];
                 if ( resolve_htlc ) var expected_amount_for_paul = paul_channels[ channel_identifier ][ "tx_funding_amt" ] + 500 - paul_channels[ channel_identifier ][ "balance" ][ "remote" ];
                 var pauls_new_publication_preimage = bytesToHex( nobleSecp256k1.utils.randomPrivateKey() ).substring( 0, 32 );
                 var pauls_new_publication_hash = rmd160( hexToBytes( pauls_new_publication_preimage ) );
                 var pauls_new_revocation_preimage = bytesToHex( nobleSecp256k1.utils.randomPrivateKey() ).substring( 0, 32 );
                 var pauls_new_revocation_hash = rmd160( hexToBytes( pauls_new_revocation_preimage ) );
-                //todo: use more relays
-                var msgnum = 10;
-                alert( `Hit ok when your counterparty sent message ${msgnum}` );
-                var msg_from_counterparty = await getDMs( [ pauls_key.substring( 2 ) ], "wss://nostrue.com" );
-                try {
-                    var vickys_data = decrypt( privkey, msg_from_counterparty.pubkey, msg_from_counterparty.content );
-                } catch( e ) {
-                    //todo: automate the force close
-                    return alert( `Your counterparty stopped responding during a state update! Time to force close` );
-                }
-                console.log( `Got message ${msgnum}`, vickys_data );
-                // var vickys_data = prompt( `enter Vicky's new pub & rev hashes & amount` );
+                var vickys_data = prompt( `enter Vicky's new pub & rev hashes & amount` );
                 vickys_data = JSON.parse( vickys_data );
                 var vickys_new_publication_hash = vickys_data[ 3 ];
                 var vickys_new_revocation_hash = vickys_data[ 4 ];
                 var amount_for_paul = vickys_data[ 5 ];
                 var channel_identifier = vickys_data[ 1 ];
+                var vickys_key = paul_channels[ channel_identifier ][ "vickys_key" ];
                 var transitioning_to = paul_channels[ channel_identifier ][ "old_states" ].length + 1;
+                var msgnum = 10;
                 var msg_to_sign = `${channel_identifier}${transitioning_to}${msgnum}${vickys_new_publication_hash}${vickys_new_revocation_hash}${amount_for_paul}`;
                 var msghash = await sha256( msg_to_sign );
                 var sig = vickys_data[ 2 ];
@@ -350,6 +257,7 @@
                 else var conf = confirm( msg );
                 if ( amount_paul_wants && amount_paul_will_get != amount_paul_wants ) return;
                 if ( !conf ) return;
+                var vickys_key = paul_channels[ channel_identifier ][ "vickys_key" ];
                 var new_post_funding_script_paul = [
                     'OP_RIPEMD160',
                     pauls_new_publication_hash,
@@ -550,29 +458,14 @@
                 var msg_to_sign = `${channel_identifier}${transitioning_to}${msgnum}${pauls_new_publication_hash}${pauls_new_revocation_hash}${pauls_address}`;
                 var msghash = await sha256( msg_to_sign );
                 var sig = await nobleSecp256k1.sign( msghash, privkey );
-                // console.log( `new pub & rev hashes & btc address: ${JSON.stringify( [ msgnum, channel_identifier, sig, pauls_new_publication_hash, pauls_new_revocation_hash, pauls_address] )}` );
-                //todo: use more relays
-                alert( `Hit ok to send msg ${msgnum}` );
-                await sendDM( JSON.stringify( [ msgnum, channel_identifier, sig, pauls_new_publication_hash, pauls_new_revocation_hash, pauls_address] ), vickys_key.substring( 2 ), "wss://nostrue.com", pauls_key.substring( 2 ), privkey, msgnum );
-                showToast( `sent message ${msgnum}` );
-                await waitSomeSeconds( 2 );
-                console.log( `sent message ${msgnum}` );
-                // alert( `Give Vicky the data in your console` );
-                //todo: use more relays
-                var msgnum = 20;
-                alert( `Hit ok when your counterparty sent message ${msgnum}` );
-                var msg_from_counterparty = await getDMs( [ pauls_key.substring( 2 ) ], "wss://nostrue.com" );
-                try {
-                    var vickys_data = decrypt( privkey, msg_from_counterparty.pubkey, msg_from_counterparty.content );
-                } catch( e ) {
-                    //todo: automate the force close
-                    return alert( `Your counterparty stopped responding during a state update! Time to force close` );
-                }
-                console.log( `Got message ${msgnum}`, vickys_data );
-                // var vickys_data = prompt( `enter Vicky's three new signatures` );
+                console.log( `new pub & rev hashes & btc address: ${JSON.stringify( [ msgnum, channel_identifier, sig, pauls_new_publication_hash, pauls_new_revocation_hash, pauls_address] )}` );
+                alert( `Give Vicky the data in your console` );
+                var vickys_data = prompt( `enter Vicky's three new signatures` );
                 vickys_data = JSON.parse( vickys_data );
                 var channel_identifier = vickys_data[ 1 ];
+                var vickys_key = paul_channels[ channel_identifier ][ "vickys_key" ];
                 var transitioning_to = paul_channels[ channel_identifier ][ "old_states" ].length + 1;
+                var msgnum = 20;
                 var msg_to_sign = `${channel_identifier}${transitioning_to}${msgnum}${vickys_data[ 3 ]}${vickys_data[ 4 ]}${vickys_data[ 5 ]}`;
                 var msghash = await sha256( msg_to_sign );
                 var sig = vickys_data[ 2 ];
@@ -771,31 +664,15 @@
                 var msg_to_sign = `${channel_identifier}${transitioning_to}${msgnum}${new_tx_funding_pauls_sig_vicky.hex}${new_post_funding_pauls_sig_vicky.hex}${new_tx_commit_pauls_sig_vicky.hex}`;
                 var msghash = await sha256( msg_to_sign );
                 var sig = await nobleSecp256k1.sign( msghash, privkey );
-                // console.log( `give this data to Vicky: ${ JSON.stringify( [ msgnum, channel_identifier, sig, new_tx_funding_pauls_sig_vicky.hex, new_post_funding_pauls_sig_vicky.hex, new_tx_commit_pauls_sig_vicky.hex] ) }`);
-                //todo: use more relays
-                alert( `Hit ok to send msg ${msgnum}` );
-                await sendDM( JSON.stringify( [ msgnum, channel_identifier, sig, new_tx_funding_pauls_sig_vicky.hex, new_post_funding_pauls_sig_vicky.hex, new_tx_commit_pauls_sig_vicky.hex] ), vickys_key.substring( 2 ), "wss://nostrue.com", pauls_key.substring( 2 ), privkey, msgnum );
-                showToast( `sent message ${msgnum}` );
-                await waitSomeSeconds( 2 );
-                console.log( `sent message ${msgnum}` );
-                // alert( `Send the info in your console to Vicky` );
-                //todo: use more relays
-                var msgnum = 30;
-                alert( `Hit ok when your counterparty sent message ${msgnum}` );
-                var msg_from_counterparty = await getDMs( [ pauls_key.substring( 2 ) ], "wss://nostrue.com" );
-                try {
-                    var vickys_data = decrypt( privkey, msg_from_counterparty.pubkey, msg_from_counterparty.content );
-                } catch( e ) {
-                    //todo: automate the force close
-                    return alert( `Your counterparty stopped responding during a state update! Time to force close` );
-                }
-                console.log( `Got message ${msgnum}`, vickys_data );
-                // var vickys_data = prompt( `enter Vicky's revocation preimage for state ${paul_channels[ channel_identifier ][ "old_states" ].length - 1}` );
+                console.log( `give this data to Vicky: ${ JSON.stringify( [ msgnum, channel_identifier, sig, new_tx_funding_pauls_sig_vicky.hex, new_post_funding_pauls_sig_vicky.hex, new_tx_commit_pauls_sig_vicky.hex] ) }`);
+                alert( `Send the info in your console to Vicky` );
+                var vickys_data = prompt( `enter Vicky's revocation preimage for state ${paul_channels[ channel_identifier ][ "old_states" ].length - 1}` );
                 vickys_data = JSON.parse( vickys_data );
                 var channel_identifier = vickys_data[ 1 ];
+                var vickys_key = paul_channels[ channel_identifier ][ "vickys_key" ];
                 var transitioning_to = paul_channels[ channel_identifier ][ "old_states" ].length;
+                var msgnum = 30;
                 var msg_to_sign = `${channel_identifier}${transitioning_to}${msgnum}${vickys_data[ 3 ]}`;
-                console.log( "msg_to_sign:", msg_to_sign );
                 var msghash = await sha256( msg_to_sign );
                 var sig = vickys_data[ 2 ];
                 var sig_is_valid = await nobleSecp256k1.verify( sig, msghash, vickys_key );
@@ -810,189 +687,8 @@
                 var msg_to_sign = `${channel_identifier}${transitioning_to}${msgnum}${paul_channels[ channel_identifier ][ "old_states" ][ paul_channels[ channel_identifier ][ "old_states" ].length - 1 ][ "pauls_revocation_preimage" ]}`;
                 var msghash = await sha256( msg_to_sign );
                 var sig = await nobleSecp256k1.sign( msghash, privkey );
-                // console.log( `Send this revocation preimage to Vicky: ${JSON.stringify( [ msgnum, channel_identifier, sig, paul_channels[ channel_identifier ][ "old_states" ][ paul_channels[ channel_identifier ][ "old_states" ].length - 1 ][ "pauls_revocation_preimage" ] ] )}` );
-                //todo: use more relays
-                alert( `Hit ok to send msg ${msgnum}` );
-                await sendDM( JSON.stringify( [ msgnum, channel_identifier, sig, paul_channels[ channel_identifier ][ "old_states" ][ paul_channels[ channel_identifier ][ "old_states" ].length - 1 ][ "pauls_revocation_preimage" ] ] ), vickys_key.substring( 2 ), "wss://nostrue.com", pauls_key.substring( 2 ), privkey, msgnum );
-                showToast( `sent message ${msgnum}` );
-                await waitSomeSeconds( 2 );
-                console.log( `sent message ${msgnum}` );
-                // alert( `send Vicky your revocation preimage (it is in your console)` );
-            }
-            var getDMs = async ( pubkeys, relay ) => {
-                return new Promise( async function( resolve, reject ) {
-                    var started_waiting_time = Math.floor( Date.now() / 1000 );
-                    var relays = [ relay ];
-                    var resolveEvent = async event => {
-                        if ( !event ) return;
-                        var event = JSON.parse( event.data );
-                        if ( !event[ 2 ] || event[ 2 ] === true ) return;
-                        var sig = event[ 2 ].sig;
-                        var eventData = JSON.stringify([
-                            0,
-                            event[ 2 ]['pubkey'],
-                            event[ 2 ]['created_at'],
-                            event[ 2 ]['kind'],
-                            event[ 2 ]['tags'],
-                            event[ 2 ]['content']
-                        ]);
-                        var id  = await sha256( eventData ).toString( 'hex' );
-                        var valid = await nobleSecp256k1.schnorr.verify( sig, id, event[ 2 ].pubkey );
-                        resolve( event[ 2 ] );
-                    }
-                    socket.close();
-                    await waitSomeSeconds( 1 );
-                    socket = {}
-                    socket = new WebSocket( relay );
-                    socket.addEventListener( 'message', resolveEvent );
-                    var randomid = bytesToHex( nobleSecp256k1.utils.randomPrivateKey() ).substring( 0, 16 );
-                    var filter = { "#p": pubkeys, "since": started_waiting_time - 30, "limit": 1 }
-                    var subscription = [ "REQ", randomid, filter ];
-                    subscription = JSON.stringify( subscription );
-                    socket.addEventListener( 'open', () => {socket.send( subscription );});
-                    setTimeout( () => {resolve( "not found" )}, 10000 );
-                });
-            }
-            async function getSignedEvent( event, privateKey ) {
-                var eventData = JSON.stringify([
-                    0,
-                    event['pubkey'],
-                    event['created_at'],
-                    event['kind'],
-                    event['tags'],
-                    event['content']
-                ]);
-                var id = await sha256( eventData );
-                event.id = id;
-                event.sig = await nobleSecp256k1.schnorr.sign( event.id, privateKey );
-                return event;
-            }
-            var sendDM = async ( note, recipient, relay, mypubkey, myprivkey, num ) => {
-                var event = {
-                    "content": encrypt( myprivkey, recipient, note ),
-                    "created_at": Math.floor( Date.now() / 1000 ),
-                    "kind": 4,
-                    "tags": [ [ "p", recipient ], [ "num", String( num ) ] ],
-                    "pubkey": mypubkey
-                }
-                var signed_event = await getSignedEvent( event, myprivkey );
-                await eventWasReplayedTilSeen( signed_event.id, relay, 0, signed_event );
-                return signed_event;
-            }
-            function encrypt( privkey, pubkey, text ) {
-                var key = nobleSecp256k1.getSharedSecret( privkey, '02' + pubkey, true ).substring( 2 );
-                var iv = hexToBytes( getRand( 16 ) );
-                var cipher = browserifyCipher.createCipheriv( 'aes-256-cbc', hexToBytes( key ), iv );
-                var encryptedMessage = cipher.update(text,"utf8","base64");
-                emsg = encryptedMessage + cipher.final( "base64" );
-                var uint8View = new Uint8Array( iv.buffer );
-                var decoder = new TextDecoder();
-                return emsg + "?iv=" + btoa( String.fromCharCode.apply( null, uint8View ) );
-            }
-            function decrypt( privkey, pubkey, ciphertext ) {
-                var [ emsg, iv ] = ciphertext.split( "?iv=" );
-                var key = nobleSecp256k1.getSharedSecret( privkey, '02' + pubkey, true ).substring( 2 );
-                var decipher = browserifyCipher.createDecipheriv(
-                    'aes-256-cbc',
-                    hexToBytes( key ),
-                    hexToBytes( base64ToHex( iv ) )
-                );
-                var decryptedMessage = decipher.update( emsg, "base64" );
-                dmsg = decryptedMessage + decipher.final( "utf8" );
-                return dmsg;
-            }
-            var waitSomeSeconds = num => {
-                var num = num.toString() + "000";
-                num = Number( num );
-                return new Promise( resolve => setTimeout( resolve, num ) );
-            }
-            function showToast( content ) {
-                var x = $( '.toast' );
-                x.innerHTML = content;
-                x.classList.add( "show" );
-                setTimeout(function(){ x.classList.remove( "show" ); }, 3000);
-            }
-            var eventWasReplayedTilSeen = async ( event_id, the_relay, num, event, rate_limit_num = 10 ) => {
-                if ( !num ) num = 0;
-                if ( num == 0 ) {
-                    if ( socket.readyState == 1 ) {
-                        socket.send( JSON.stringify( ["EVENT", event ] ) );
-                    } else {
-                        socket.close();
-                        await waitSomeSeconds( 1 );
-                        socket = {}
-                        socket = new WebSocket( relay );                        
-                        socket.addEventListener( 'open', () => {
-                            socket.send( JSON.stringify( ["EVENT", event ] ) );
-                        });
-                    }
-                }
-                var response = await getNostrNote( event_id, the_relay );
-                console.log( 'response:', response );
-                if ( response != "time is up" && response != "not found" ) return true;
-                console.log( "replaying this event:", event_id, "at this relay:", the_relay );
-                num = num + 1;
-                if ( socket.readyState == 1 ) {
-                    socket.send( JSON.stringify( ["EVENT", event ] ) );
-                } else {
-                    socket.close();
-                    await waitSomeSeconds( 1 );
-                    socket = {}
-                    socket = new WebSocket( relay );                        
-                    socket.addEventListener( 'open', () => {
-                        socket.send( JSON.stringify( ["EVENT", event ] ) );
-                    });
-                }
-                var was_seen = false;
-                if ( num < 2 ) was_seen = await eventWasReplayedTilSeen( event_id, the_relay, num, event, rate_limit_num );
-                if ( !was_seen ) {
-                    showToast( `Rate limit exceeded, waiting ${rate_limit_num} seconds and retrying` );
-                    countdown( rate_limit_num );
-                    await waitSomeSeconds( rate_limit_num );
-                    rate_limit_num = rate_limit_num * 2;
-                    was_seen = await eventWasReplayedTilSeen( event_id, the_relay, num, event, rate_limit_num );
-                }
-                return was_seen;
-            }
-            var countdown = async ( num = 40 ) => {
-                console.log( num );
-                if ( !( num % 4 ) ) showToast( num );
-                await waitSomeSeconds( 1 );
-                if ( num > 0 ) countdown( num - 1 );
-            }
-            var getNostrNote = async ( id, relay ) => {
-                return new Promise( async function( resolve, reject ) {
-                    var started_waiting_time = Math.floor( Date.now() / 1000 );
-                    var relays = [ relay ];
-                    var resolveEvent = async event => {
-                        if ( !event ) return;
-                        var event = JSON.parse( event.data );
-                        if ( !event[ 2 ] || event[ 2 ] === true ) return;
-                        var sig = event[ 2 ].sig;
-                        var eventData = JSON.stringify([
-                            0,
-                            event[ 2 ]['pubkey'],
-                            event[ 2 ]['created_at'],
-                            event[ 2 ]['kind'],
-                            event[ 2 ]['tags'],
-                            event[ 2 ]['content']
-                        ]);
-                        var id  = await sha256( eventData );
-                        var valid = await nobleSecp256k1.schnorr.verify( sig, id, event[ 2 ].pubkey );
-                        resolve( event[ 2 ] );
-                    }
-                    socket.close();
-                    await waitSomeSeconds( 1 );
-                    socket = {}
-                    socket = new WebSocket( relay );
-                    socket.addEventListener( 'message', resolveEvent );
-                    var randomid = bytesToHex( nobleSecp256k1.utils.randomPrivateKey() ).substring( 0, 16 );
-                    var filter = { "ids": [ id ] }
-                    var subscription = [ "REQ", randomid, filter ];
-                    subscription = JSON.stringify( subscription );
-                    socket.addEventListener( 'open', () => {socket.send( subscription );});
-                    setTimeout( () => {resolve( "not found" )}, 10000 );
-                });
+                console.log( `Send this revocation preimage to Vicky: ${JSON.stringify( [ msgnum, channel_identifier, sig, paul_channels[ channel_identifier ][ "old_states" ][ paul_channels[ channel_identifier ][ "old_states" ].length - 1 ][ "pauls_revocation_preimage" ] ] )}` );
+                alert( `send Vicky your revocation preimage (it is in your console)` );
             }
         </script>
     </head>
@@ -1000,8 +696,6 @@
         <h1>Hi Paul</h1>
         <script>
             var paul_channels = {}
-            var relay = "wss://nostrue.com";
-            var socket = new WebSocket( relay );
             var createChannel = async () => {
                 var refund_cblock = null;
                 var privkey = bytesToHex( nobleSecp256k1.utils.randomPrivateKey() );
@@ -1020,19 +714,8 @@
                 var msghash = await sha256( msg_to_sign );
                 var sig = await nobleSecp256k1.sign( msghash, privkey );
                 console.log( "send this to Vicky:", JSON.stringify( [ msgnum, channel_identifier, sig, pauls_key, pauls_publication_hash, pauls_revocation_hash ] ) );
-                // alert( `send Vicky your key, publication hash, and revocation hash (they are in your console -- if you don't see them there, refresh your page repeatedly til you do)` );
-                //todo: use more relays
-                var msgnum = 1;
-                alert( `Hit ok when your counterparty's browser says it is done sending message ${msgnum}` );
-                var msg_from_counterparty = await getDMs( [ pauls_key.substring( 2 ) ], "wss://nostrue.com" );
-                try {
-                    var data_from_vicky = decrypt( privkey, msg_from_counterparty.pubkey, msg_from_counterparty.content );
-                } catch( e ) {
-                    //todo: automate the force close
-                    return alert( `Your counterparty stopped responding during a state update! Time to force close` );
-                }
-                console.log( `Got message ${msgnum}`, data_from_vicky );
-                // var data_from_vicky = prompt( `enter the info from Vicky` );
+                alert( `send Vicky your key, publication hash, and revocation hash (they are in your console -- if you don't see them there, refresh your page repeatedly til you do)` );
+                var data_from_vicky = prompt( `enter the info from Vicky` );
                 data_from_vicky = JSON.parse( data_from_vicky );
                 var prefunding_txid = data_from_vicky[ 3 ][ "prefunding_txid" ];
                 var prefunding_vout = data_from_vicky[ 3 ][ "prefunding_vout" ];
@@ -1044,6 +727,7 @@
                 var prefunding_address = data_from_vicky[ 3 ][ "prefunding_address" ];
                 var channel_identifier = data_from_vicky[ 1 ];
                 var transitioning_to = 0;
+                var msgnum = 1;
                 var msg_to_sign = `${channel_identifier}${transitioning_to}${msgnum}${JSON.stringify(data_from_vicky[ 3 ])}`;
                 var msghash = await sha256( msg_to_sign );
                 var sig = data_from_vicky[ 2 ];
@@ -1249,14 +933,8 @@
                 var msg_to_sign = `${channel_identifier}${transitioning_to}${msgnum}${tx_funding_pauls_sig_vicky.hex}${post_funding_pauls_sig_vicky.hex}${tx_refund_pauls_sig_vicky.hex}`;
                 var msghash = await sha256( msg_to_sign );
                 var sig = await nobleSecp256k1.sign( msghash, privkey );
-                // var pauls_sigs = [ msgnum, channel_identifier, sig, tx_funding_pauls_sig_vicky.hex, post_funding_pauls_sig_vicky.hex, tx_refund_pauls_sig_vicky.hex ];
-                // console.log( `give these sigs to Vicky: ${JSON.stringify( pauls_sigs )}` );
-                //todo: use more relays
-                alert( `Hit ok to send msg ${msgnum}` );
-                await sendDM( JSON.stringify( [ msgnum, channel_identifier, sig, tx_funding_pauls_sig_vicky.hex, post_funding_pauls_sig_vicky.hex, tx_refund_pauls_sig_vicky.hex ] ), vickys_key.substring( 2 ), "wss://nostrue.com", pauls_key.substring( 2 ), privkey, msgnum );
-                showToast( `sent message ${msgnum}` );
-                await waitSomeSeconds( 2 );
-                console.log( `sent message ${msgnum}` );
+                var pauls_sigs = [ msgnum, channel_identifier, sig, tx_funding_pauls_sig_vicky.hex, post_funding_pauls_sig_vicky.hex, tx_refund_pauls_sig_vicky.hex ];
+                console.log( `give these sigs to Vicky: ${JSON.stringify( pauls_sigs )}` );
                 if ( !( channel_identifier in paul_channels ) ) paul_channels[ channel_identifier ] = {}
                 paul_channels[ channel_identifier ][ "force_close_txs" ] = {
                     other_partys_to_reveal_txid,
@@ -1281,10 +959,9 @@
                 }
                 paul_channels[ channel_identifier ][ "privkey" ] = privkey;
                 paul_channels[ channel_identifier ][ "pauls_key" ] = pauls_key;
-                // alert( `Send the data in your console to Vicky` );
+                alert( `Send the data in your console to Vicky` );
             }
             setTimeout( createChannel, 100 );
         </script>
-        <div class="toast"></div>
     </body>
 </html>
