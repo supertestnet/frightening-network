@@ -129,7 +129,12 @@
                     var msgnum = 6;
                     alert( `Hit ok when your counterparty sent message ${msgnum}` );
                     var msg_from_counterparty = await getDMs( [ pauls_key.substring( 2 ) ], "wss://nostrue.com" );
-                    var vickys_data = decrypt( privkey, msg_from_counterparty.pubkey, msg_from_counterparty.content );
+                    try {
+                        var vickys_data = decrypt( privkey, msg_from_counterparty.pubkey, msg_from_counterparty.content );
+                    } catch( e ) {
+                        //todo: automate the force close
+                        return alert( `Your counterparty stopped responding during a state update! Time to force close` );
+                    }
                     console.log( `Got message ${msgnum}`, vickys_data );
                     // var vickys_data = prompt( `enter the data from Vicky` );
                     vickys_data = JSON.parse( vickys_data );
@@ -156,8 +161,7 @@
                     // console.log( "send this to Vicky:", JSON.stringify( [ msgnum, channel_identifier, sig, pmthash, amt ] ) );
                     //todo: use more relays
                     alert( `Hit ok to send msg ${msgnum}` );
-                    var event_id = await sendDM( JSON.stringify( [ msgnum, channel_identifier, sig, pmthash, amt ] ), vickys_key.substring( 2 ), "wss://nostrue.com", pauls_key.substring( 2 ), privkey, msgnum );
-                    await eventWasReplayedTilSeen( event_id, "wss://nostrue.com" );
+                    await sendDM( JSON.stringify( [ msgnum, channel_identifier, sig, pmthash, amt ] ), vickys_key.substring( 2 ), "wss://nostrue.com", pauls_key.substring( 2 ), privkey, msgnum );
                     showToast( `sent message ${msgnum}` );
                     await waitSomeSeconds( 2 );
                     console.log( `sent message ${msgnum}` );
@@ -172,8 +176,7 @@
                     // console.log( `send this info to Vicky: ${JSON.stringify( [ msgnum, channel_identifier, sig, preimage ] )}` );
                     //todo: use more relays
                     alert( `Hit ok to send msg ${msgnum}\n\nSEND ME FIRST` );
-                    var event_id = await sendDM( JSON.stringify( [ msgnum, channel_identifier, sig, preimage ] ), vickys_key.substring( 2 ), "wss://nostrue.com", pauls_key.substring( 2 ), privkey, msgnum );
-                    await eventWasReplayedTilSeen( event_id, "wss://nostrue.com" );
+                    await sendDM( JSON.stringify( [ msgnum, channel_identifier, sig, preimage ] ), vickys_key.substring( 2 ), "wss://nostrue.com", pauls_key.substring( 2 ), privkey, msgnum );
                     showToast( `sent message ${msgnum}` );
                     await waitSomeSeconds( 2 );
                     console.log( `sent message ${msgnum}` );
@@ -183,7 +186,12 @@
                     var msgnum = 45;
                     alert( `Hit ok when your counterparty sent message ${msgnum}` );
                     var msg_from_counterparty = await getDMs( [ pauls_key.substring( 2 ) ], "wss://nostrue.com" );
-                    var vickys_info = decrypt( privkey, msg_from_counterparty.pubkey, msg_from_counterparty.content );
+                    try {
+                        var vickys_info = decrypt( privkey, msg_from_counterparty.pubkey, msg_from_counterparty.content );
+                    } catch( e ) {
+                        //todo: automate the force close
+                        return alert( `Your counterparty stopped responding during a state update! Time to force close` );
+                    }
                     console.log( `Got message ${msgnum}`, vickys_info );
                     // var vickys_info = prompt( `enter a preimage from Vicky` );
                     vickys_info = JSON.parse( vickys_info );
@@ -309,7 +317,12 @@
                 var msgnum = 10;
                 alert( `Hit ok when your counterparty sent message ${msgnum}` );
                 var msg_from_counterparty = await getDMs( [ pauls_key.substring( 2 ) ], "wss://nostrue.com" );
-                var vickys_data = decrypt( privkey, msg_from_counterparty.pubkey, msg_from_counterparty.content );
+                try {
+                    var vickys_data = decrypt( privkey, msg_from_counterparty.pubkey, msg_from_counterparty.content );
+                } catch( e ) {
+                    //todo: automate the force close
+                    return alert( `Your counterparty stopped responding during a state update! Time to force close` );
+                }
                 console.log( `Got message ${msgnum}`, vickys_data );
                 // var vickys_data = prompt( `enter Vicky's new pub & rev hashes & amount` );
                 vickys_data = JSON.parse( vickys_data );
@@ -540,8 +553,7 @@
                 // console.log( `new pub & rev hashes & btc address: ${JSON.stringify( [ msgnum, channel_identifier, sig, pauls_new_publication_hash, pauls_new_revocation_hash, pauls_address] )}` );
                 //todo: use more relays
                 alert( `Hit ok to send msg ${msgnum}` );
-                var event_id = await sendDM( JSON.stringify( [ msgnum, channel_identifier, sig, pauls_new_publication_hash, pauls_new_revocation_hash, pauls_address] ), vickys_key.substring( 2 ), "wss://nostrue.com", pauls_key.substring( 2 ), privkey, msgnum );
-                await eventWasReplayedTilSeen( event_id, "wss://nostrue.com" );
+                await sendDM( JSON.stringify( [ msgnum, channel_identifier, sig, pauls_new_publication_hash, pauls_new_revocation_hash, pauls_address] ), vickys_key.substring( 2 ), "wss://nostrue.com", pauls_key.substring( 2 ), privkey, msgnum );
                 showToast( `sent message ${msgnum}` );
                 await waitSomeSeconds( 2 );
                 console.log( `sent message ${msgnum}` );
@@ -550,7 +562,12 @@
                 var msgnum = 20;
                 alert( `Hit ok when your counterparty sent message ${msgnum}` );
                 var msg_from_counterparty = await getDMs( [ pauls_key.substring( 2 ) ], "wss://nostrue.com" );
-                var vickys_data = decrypt( privkey, msg_from_counterparty.pubkey, msg_from_counterparty.content );
+                try {
+                    var vickys_data = decrypt( privkey, msg_from_counterparty.pubkey, msg_from_counterparty.content );
+                } catch( e ) {
+                    //todo: automate the force close
+                    return alert( `Your counterparty stopped responding during a state update! Time to force close` );
+                }
                 console.log( `Got message ${msgnum}`, vickys_data );
                 // var vickys_data = prompt( `enter Vicky's three new signatures` );
                 vickys_data = JSON.parse( vickys_data );
@@ -757,8 +774,7 @@
                 // console.log( `give this data to Vicky: ${ JSON.stringify( [ msgnum, channel_identifier, sig, new_tx_funding_pauls_sig_vicky.hex, new_post_funding_pauls_sig_vicky.hex, new_tx_commit_pauls_sig_vicky.hex] ) }`);
                 //todo: use more relays
                 alert( `Hit ok to send msg ${msgnum}` );
-                var event_id = await sendDM( JSON.stringify( [ msgnum, channel_identifier, sig, new_tx_funding_pauls_sig_vicky.hex, new_post_funding_pauls_sig_vicky.hex, new_tx_commit_pauls_sig_vicky.hex] ), vickys_key.substring( 2 ), "wss://nostrue.com", pauls_key.substring( 2 ), privkey, msgnum );
-                await eventWasReplayedTilSeen( event_id, "wss://nostrue.com" );
+                await sendDM( JSON.stringify( [ msgnum, channel_identifier, sig, new_tx_funding_pauls_sig_vicky.hex, new_post_funding_pauls_sig_vicky.hex, new_tx_commit_pauls_sig_vicky.hex] ), vickys_key.substring( 2 ), "wss://nostrue.com", pauls_key.substring( 2 ), privkey, msgnum );
                 showToast( `sent message ${msgnum}` );
                 await waitSomeSeconds( 2 );
                 console.log( `sent message ${msgnum}` );
@@ -767,7 +783,12 @@
                 var msgnum = 30;
                 alert( `Hit ok when your counterparty sent message ${msgnum}` );
                 var msg_from_counterparty = await getDMs( [ pauls_key.substring( 2 ) ], "wss://nostrue.com" );
-                var vickys_data = decrypt( privkey, msg_from_counterparty.pubkey, msg_from_counterparty.content );
+                try {
+                    var vickys_data = decrypt( privkey, msg_from_counterparty.pubkey, msg_from_counterparty.content );
+                } catch( e ) {
+                    //todo: automate the force close
+                    return alert( `Your counterparty stopped responding during a state update! Time to force close` );
+                }
                 console.log( `Got message ${msgnum}`, vickys_data );
                 // var vickys_data = prompt( `enter Vicky's revocation preimage for state ${paul_channels[ channel_identifier ][ "old_states" ].length - 1}` );
                 vickys_data = JSON.parse( vickys_data );
@@ -792,15 +813,14 @@
                 // console.log( `Send this revocation preimage to Vicky: ${JSON.stringify( [ msgnum, channel_identifier, sig, paul_channels[ channel_identifier ][ "old_states" ][ paul_channels[ channel_identifier ][ "old_states" ].length - 1 ][ "pauls_revocation_preimage" ] ] )}` );
                 //todo: use more relays
                 alert( `Hit ok to send msg ${msgnum}` );
-                var event_id = await sendDM( JSON.stringify( [ msgnum, channel_identifier, sig, paul_channels[ channel_identifier ][ "old_states" ][ paul_channels[ channel_identifier ][ "old_states" ].length - 1 ][ "pauls_revocation_preimage" ] ] ), vickys_key.substring( 2 ), "wss://nostrue.com", pauls_key.substring( 2 ), privkey, msgnum );
-                await eventWasReplayedTilSeen( event_id, "wss://nostrue.com" );
+                await sendDM( JSON.stringify( [ msgnum, channel_identifier, sig, paul_channels[ channel_identifier ][ "old_states" ][ paul_channels[ channel_identifier ][ "old_states" ].length - 1 ][ "pauls_revocation_preimage" ] ] ), vickys_key.substring( 2 ), "wss://nostrue.com", pauls_key.substring( 2 ), privkey, msgnum );
                 showToast( `sent message ${msgnum}` );
                 await waitSomeSeconds( 2 );
                 console.log( `sent message ${msgnum}` );
                 // alert( `send Vicky your revocation preimage (it is in your console)` );
             }
             var getDMs = async ( pubkeys, relay ) => {
-                return new Promise( function( resolve, reject ) {
+                return new Promise( async function( resolve, reject ) {
                     var started_waiting_time = Math.floor( Date.now() / 1000 );
                     var relays = [ relay ];
                     var resolveEvent = async event => {
@@ -820,18 +840,17 @@
                         var valid = await nobleSecp256k1.schnorr.verify( sig, id, event[ 2 ].pubkey );
                         resolve( event[ 2 ] );
                     }
-                    var open = ( pubkeys, started_waiting_time ) => {
-                        var randomid = bytesToHex( nobleSecp256k1.utils.randomPrivateKey() ).substring( 0, 16 );
-                        var filter = { "#p": pubkeys, "since": started_waiting_time - 30, "limit": 1 }
-                        var subscription = [ "REQ", randomid, filter ];
-                        subscription = JSON.stringify( subscription );
-                        socket.addEventListener( 'open', () => {socket.send( subscription );});
-                    }
+                    socket.close();
+                    await waitSomeSeconds( 1 );
                     socket = {}
                     socket = new WebSocket( relay );
                     socket.addEventListener( 'message', resolveEvent );
-                    open( pubkeys, started_waiting_time );
-                    setTimeout( () => {resolve( "not found" )}, 2000 );
+                    var randomid = bytesToHex( nobleSecp256k1.utils.randomPrivateKey() ).substring( 0, 16 );
+                    var filter = { "#p": pubkeys, "since": started_waiting_time - 30, "limit": 1 }
+                    var subscription = [ "REQ", randomid, filter ];
+                    subscription = JSON.stringify( subscription );
+                    socket.addEventListener( 'open', () => {socket.send( subscription );});
+                    setTimeout( () => {resolve( "not found" )}, 10000 );
                 });
             }
             async function getSignedEvent( event, privateKey ) {
@@ -857,11 +876,8 @@
                     "pubkey": mypubkey
                 }
                 var signed_event = await getSignedEvent( event, myprivkey );
-                var open = () => {
-                    socket.send( JSON.stringify( ["EVENT", signed_event ] ) )
-                }
-                open();
-                return signed_event.id;
+                await eventWasReplayedTilSeen( signed_event.id, relay, 0, signed_event );
+                return signed_event;
             }
             function encrypt( privkey, pubkey, text ) {
                 var key = nobleSecp256k1.getSharedSecret( privkey, '02' + pubkey, true ).substring( 2 );
@@ -896,19 +912,56 @@
                 x.classList.add( "show" );
                 setTimeout(function(){ x.classList.remove( "show" ); }, 3000);
             }
-            var eventWasReplayedTilSeen = async ( event_id, the_relay, num ) => {
+            var eventWasReplayedTilSeen = async ( event_id, the_relay, num, event, rate_limit_num = 10 ) => {
                 if ( !num ) num = 0;
-                var event = await getNostrNote( event_id, the_relay );
-                if ( event != "time is up" ) return true;
+                if ( num == 0 ) {
+                    if ( socket.readyState == 1 ) {
+                        socket.send( JSON.stringify( ["EVENT", event ] ) );
+                    } else {
+                        socket.close();
+                        await waitSomeSeconds( 1 );
+                        socket = {}
+                        socket = new WebSocket( relay );                        
+                        socket.addEventListener( 'open', () => {
+                            socket.send( JSON.stringify( ["EVENT", event ] ) );
+                        });
+                    }
+                }
+                var response = await getNostrNote( event_id, the_relay );
+                console.log( 'response:', response );
+                if ( response != "time is up" && response != "not found" ) return true;
                 console.log( "replaying this event:", event_id, "at this relay:", the_relay );
                 num = num + 1;
-                await setNostrNote( event, the_relay );
+                if ( socket.readyState == 1 ) {
+                    socket.send( JSON.stringify( ["EVENT", event ] ) );
+                } else {
+                    socket.close();
+                    await waitSomeSeconds( 1 );
+                    socket = {}
+                    socket = new WebSocket( relay );                        
+                    socket.addEventListener( 'open', () => {
+                        socket.send( JSON.stringify( ["EVENT", event ] ) );
+                    });
+                }
                 var was_seen = false;
-                if ( num < 6 ) was_seen = await eventWasReplayedTilSeen( event_id, the_relay, num );
+                if ( num < 2 ) was_seen = await eventWasReplayedTilSeen( event_id, the_relay, num, event, rate_limit_num );
+                if ( !was_seen ) {
+                    showToast( `Rate limit exceeded, waiting ${rate_limit_num} seconds and retrying` );
+                    countdown( rate_limit_num );
+                    await waitSomeSeconds( rate_limit_num );
+                    rate_limit_num = rate_limit_num * 2;
+                    was_seen = await eventWasReplayedTilSeen( event_id, the_relay, num, event, rate_limit_num );
+                }
                 return was_seen;
             }
+            var countdown = async ( num = 40 ) => {
+                console.log( num );
+                if ( !( num % 4 ) ) showToast( num );
+                await waitSomeSeconds( 1 );
+                if ( num > 0 ) countdown( num - 1 );
+            }
             var getNostrNote = async ( id, relay ) => {
-                return new Promise( function( resolve, reject ) {
+                return new Promise( async function( resolve, reject ) {
                     var started_waiting_time = Math.floor( Date.now() / 1000 );
                     var relays = [ relay ];
                     var resolveEvent = async event => {
@@ -928,22 +981,18 @@
                         var valid = await nobleSecp256k1.schnorr.verify( sig, id, event[ 2 ].pubkey );
                         resolve( event[ 2 ] );
                     }
-                    var open = id => {
-                        var randomid = bytesToHex( nobleSecp256k1.utils.randomPrivateKey() ).substring( 0, 16 );
-                        var filter = { "ids": [ id ] }
-                        var subscription = [ "REQ", randomid, filter ];
-                        subscription = JSON.stringify( subscription );
-                        socket.addEventListener( 'open', () => {socket.send( subscription );});
-                    }
+                    socket.close();
+                    await waitSomeSeconds( 1 );
                     socket = {}
                     socket = new WebSocket( relay );
                     socket.addEventListener( 'message', resolveEvent );
-                    open( id );
-                    setTimeout( () => {resolve( "not found" )}, 2000 );
+                    var randomid = bytesToHex( nobleSecp256k1.utils.randomPrivateKey() ).substring( 0, 16 );
+                    var filter = { "ids": [ id ] }
+                    var subscription = [ "REQ", randomid, filter ];
+                    subscription = JSON.stringify( subscription );
+                    socket.addEventListener( 'open', () => {socket.send( subscription );});
+                    setTimeout( () => {resolve( "not found" )}, 10000 );
                 });
-            }
-            var setNostrNote = async ( event, relay ) => {
-                socket.send( JSON.stringify( ["EVENT", event ] ) );
             }
         </script>
     </head>
@@ -976,7 +1025,12 @@
                 var msgnum = 1;
                 alert( `Hit ok when your counterparty's browser says it is done sending message ${msgnum}` );
                 var msg_from_counterparty = await getDMs( [ pauls_key.substring( 2 ) ], "wss://nostrue.com" );
-                var data_from_vicky = decrypt( privkey, msg_from_counterparty.pubkey, msg_from_counterparty.content );
+                try {
+                    var data_from_vicky = decrypt( privkey, msg_from_counterparty.pubkey, msg_from_counterparty.content );
+                } catch( e ) {
+                    //todo: automate the force close
+                    return alert( `Your counterparty stopped responding during a state update! Time to force close` );
+                }
                 console.log( `Got message ${msgnum}`, data_from_vicky );
                 // var data_from_vicky = prompt( `enter the info from Vicky` );
                 data_from_vicky = JSON.parse( data_from_vicky );
@@ -1199,8 +1253,7 @@
                 // console.log( `give these sigs to Vicky: ${JSON.stringify( pauls_sigs )}` );
                 //todo: use more relays
                 alert( `Hit ok to send msg ${msgnum}` );
-                var event_id = await sendDM( JSON.stringify( [ msgnum, channel_identifier, sig, tx_funding_pauls_sig_vicky.hex, post_funding_pauls_sig_vicky.hex, tx_refund_pauls_sig_vicky.hex ] ), vickys_key.substring( 2 ), "wss://nostrue.com", pauls_key.substring( 2 ), privkey, msgnum );
-                await eventWasReplayedTilSeen( event_id, "wss://nostrue.com" );
+                await sendDM( JSON.stringify( [ msgnum, channel_identifier, sig, tx_funding_pauls_sig_vicky.hex, post_funding_pauls_sig_vicky.hex, tx_refund_pauls_sig_vicky.hex ] ), vickys_key.substring( 2 ), "wss://nostrue.com", pauls_key.substring( 2 ), privkey, msgnum );
                 showToast( `sent message ${msgnum}` );
                 await waitSomeSeconds( 2 );
                 console.log( `sent message ${msgnum}` );
