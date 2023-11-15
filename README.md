@@ -50,7 +50,7 @@ An important aspect of the frightening network is that message types are indicat
 4. Unused
 5. Paul sends Vicky info requesting a payment. Includes a payment hash.
 6. Vicky sends Paul info requesting a payment. Includes a payment hash.
-7. Unused
+7. Vicky sends Paul info informing him she wants to pay someone *through* him. Includes an invoice.
 8. Unused
 9. Unused
 10. Vicky sends Paul info intiating a state change. Includes a new publication hash, a new revocation hash, and an amount.
